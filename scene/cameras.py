@@ -15,10 +15,13 @@ import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 class Camera(nn.Module):
+    ## START MODIFICATION ##
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
+                 is_synthetic: bool = False, synth_mask_tensor = None,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
                  ):
+    ## END MODIFICATION ##
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -39,6 +42,13 @@ class Camera(nn.Module):
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
+
+        ## START MODIFICATION ##
+        self.is_synthetic = is_synthetic
+        self.synth_mask = None
+        if self.is_synthetic and synth_mask_tensor is not None:
+            self.synth_mask = synth_mask_tensor.to(self.data_device)
+        ## END MODIFICATION ##
 
         if gt_alpha_mask is not None:
             self.original_image *= gt_alpha_mask.to(self.data_device)
@@ -68,4 +78,3 @@ class MiniCam:
         self.full_proj_transform = full_proj_transform
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
-

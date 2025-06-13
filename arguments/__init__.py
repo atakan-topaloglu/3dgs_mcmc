@@ -49,7 +49,11 @@ class ModelParams(ParamGroup):
         self.sh_degree = 3
         self._source_path = ""
         self._model_path = ""
-        self._images = "images"
+        ## START MODIFICATION ##
+        self._images = "input"
+        self.masks_dir = "masks"
+        self.synthetic_list = "synthetic_list.txt"
+        ## END MODIFICATION ##
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
@@ -92,6 +96,10 @@ class OptimizationParams(ParamGroup):
         self.noise_lr = 5e5
         self.scale_reg = 0.01
         self.opacity_reg = 0.01
+        ## START MODIFICATION ##
+        self.p_gt = 0.5
+        self.w_synth = 1.0
+        ## END MODIFICATION ##
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

@@ -24,6 +24,9 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from scene.gaussian_model import build_scaling_rotation
+## START MODIFICATION ##
+import numpy as np
+## END MODIFICATION ##
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -49,7 +52,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    viewpoint_stack = None
+    ## START MODIFICATION ##
+    # Split cameras for balanced sampling
+    all_train_cameras = scene.getTrainCameras().copy()
+    gt_cams = [cam for cam in all_train_cameras if not cam.is_synthetic]
+    synth_cams = [cam for cam in all_train_cameras if cam.is_synthetic]
+
+    if not gt_cams:
+        print("[Warning] No GT images found. Training only on synthetic data.")
+    if not synth_cams:
+        print("[Warning] No synthetic images found. Training only on GT data.")
+
+    viewpoint_stack_gt = list(gt_cams)
+    viewpoint_stack_synth = list(synth_cams)
+    ## END MODIFICATION ##
+    
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -78,12 +95,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        ## START MODIFICATION ##
+        # Pick a random Camera with balanced sampling
+        if not viewpoint_stack_gt and gt_cams:
+            viewpoint_stack_gt = list(gt_cams)
+        if not viewpoint_stack_synth and synth_cams:
+            viewpoint_stack_synth = list(synth_cams)
+
+        use_gt = (np.random.rand() < opt.p_gt and len(gt_cams) > 0) or len(synth_cams) == 0
+
+        if use_gt:
+            viewpoint_cam = viewpoint_stack_gt.pop(randint(0, len(viewpoint_stack_gt)-1))
         else:
-            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+            viewpoint_cam = viewpoint_stack_synth.pop(randint(0, len(viewpoint_stack_synth)-1))
+        ## END MODIFICATION ##
 
         # Render
         if (iteration - 1) == debug_from:
@@ -94,13 +119,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image = render_pkg["render"]
 
+        ## START MODIFICATION ##
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        # Use unweighted L1 for logging to have a consistent metric
+        Ll1_for_log = l1_loss(image, gt_image)
 
+        if viewpoint_cam.is_synthetic and viewpoint_cam.synth_mask is not None:
+            mask = viewpoint_cam.synth_mask
+            
+            # Normalized weighted L1 loss for synthetic images
+            l1_term = (torch.abs(image - gt_image) * mask).sum() / (mask.sum() + 1e-8)
+            
+            loss = (1.0 - opt.lambda_dssim) * l1_term + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            loss *= opt.w_synth # Apply balancing weight for synthetic loss
+        else:
+            # Standard loss for GT images
+            loss = (1.0 - opt.lambda_dssim) * Ll1_for_log + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # Regularization is applied to both
         loss = loss + args.opacity_reg * torch.abs(gaussians.get_opacity).mean()
         loss = loss + args.scale_reg * torch.abs(gaussians.get_scaling).mean()
+        ## END MODIFICATION ##
 
         loss.backward()
 
@@ -116,7 +156,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            ## START MODIFICATION ##
+            # Pass the unweighted L1 for consistent logging
+            training_report(tb_writer, iteration, Ll1_for_log, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            ## END MODIFICATION ##
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)

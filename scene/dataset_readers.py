@@ -23,6 +23,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
+## START MODIFICATION ##
 class CameraInfo(NamedTuple):
     uid: int
     R: np.array
@@ -34,6 +35,9 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    is_synthetic: bool
+    synth_mask: Image
+## END MODIFICATION ##
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -65,7 +69,8 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+## START MODIFICATION ##
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, synthetic_files, masks_folder):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -94,15 +99,29 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
-        image_path = os.path.join(images_folder, os.path.basename(extr.name))
+        image_filename = os.path.basename(extr.name)
+        image_path = os.path.join(images_folder, image_filename)
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
+        is_synthetic = image_filename in synthetic_files
+        synth_mask = None
+        if is_synthetic:
+            mask_path = os.path.join(masks_folder, image_filename)
+            if os.path.exists(mask_path):
+                # Ensure mask is single channel
+                synth_mask = Image.open(mask_path).convert("L")
+            else:
+                print(f"\n[Warning] Mask not found for synthetic image {mask_path}. Treating as GT.")
+                is_synthetic = False
+
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+                              image_path=image_path, image_name=image_name, width=width, height=height,
+                              is_synthetic=is_synthetic, synth_mask=synth_mask)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
+## END MODIFICATION ##
 
 def fetchPly(path):
     plydata = PlyData.read(path)
@@ -129,21 +148,40 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, init_type="sfm", num_pts=100000):
+## START MODIFICATION ##
+def readColmapSceneInfo(args, eval, llffhold=8, init_type="sfm", num_pts=100000):
     try:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+        cameras_extrinsic_file = os.path.join(args.source_path, "sparse/0", "images.bin")
+        cameras_intrinsic_file = os.path.join(args.source_path, "sparse/0", "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     except:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+        cameras_extrinsic_file = os.path.join(args.source_path, "sparse/0", "images.txt")
+        cameras_intrinsic_file = os.path.join(args.source_path, "sparse/0", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    # Load the list of synthetic image filenames
+    synthetic_list_path = os.path.join(args.source_path, args.synthetic_list)
+    try:
+        with open(synthetic_list_path, 'r') as f:
+            synthetic_files = {line.strip() for line in f}
+        print(f"Found {len(synthetic_files)} synthetic images listed in {synthetic_list_path}")
+    except FileNotFoundError:
+        print(f"[Warning] {synthetic_list_path} not found. Assuming all images are GT.")
+        synthetic_files = set()
+
+    reading_dir = "images" if args.images == "images" else args.images # Default to 'images' if not specified
+    images_folder = os.path.join(args.source_path, reading_dir)
+    masks_folder = os.path.join(args.source_path, args.masks_dir)
+
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, 
+                                           cam_intrinsics=cam_intrinsics, 
+                                           images_folder=images_folder,
+                                           synthetic_files=synthetic_files,
+                                           masks_folder=masks_folder)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+## END MODIFICATION ##
 
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
@@ -154,10 +192,10 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, init_type="sfm", num_pts
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
+    ply_path = os.path.join(args.source_path, "sparse/0/points3D.ply")
     if init_type == "sfm":
-        ply_path = os.path.join(path, "sparse/0/points3D.ply")
-        bin_path = os.path.join(path, "sparse/0/points3D.bin")
-        txt_path = os.path.join(path, "sparse/0/points3D.txt")
+        bin_path = os.path.join(args.source_path, "sparse/0/points3D.bin")
+        txt_path = os.path.join(args.source_path, "sparse/0/points3D.txt")
         if not os.path.exists(ply_path):
             print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
             try:
@@ -166,7 +204,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, init_type="sfm", num_pts
                 xyz, rgb, _ = read_points3D_text(txt_path)
             storePly(ply_path, xyz, rgb)
     elif init_type == "random":
-        ply_path = os.path.join(path, "random.ply")
+        ply_path = os.path.join(args.source_path, "random.ply")
         print(f"Generating random point cloud ({num_pts})...")
         
         xyz = np.random.random((num_pts, 3)) * nerf_normalization["radius"]* 3*2 -(nerf_normalization["radius"]*3)
@@ -229,8 +267,11 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             FovY = fovy 
             FovX = fovx
 
+            ## START MODIFICATION ##
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1],
+                            is_synthetic=False, synth_mask=None))
+            ## END MODIFICATION ##
             
     return cam_infos
 
