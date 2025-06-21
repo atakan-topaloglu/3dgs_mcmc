@@ -17,7 +17,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, get_expon_lr_func
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -49,8 +49,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)
+
     viewpoint_stack = None
     ema_loss_for_log = 0.0
+    ema_Ll1depth_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
@@ -99,8 +102,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
-        loss = loss + args.opacity_reg * torch.abs(gaussians.get_opacity).mean()
-        loss = loss + args.scale_reg * torch.abs(gaussians.get_scaling).mean()
+        # Depth regularization
+        Ll1depth_pure = 0.0
+        if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
+            invDepth = render_pkg["depth"]
+            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            depth_mask = viewpoint_cam.depth_mask.cuda()
+
+            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+            loss += Ll1depth
+            Ll1depth = Ll1depth.item()
+        else:
+            Ll1depth = 0
+
+        loss = loss + opt.opacity_reg * torch.abs(gaussians.get_opacity).mean()
+        loss = loss + opt.scale_reg * torch.abs(gaussians.get_scaling).mean()
 
         loss.backward()
 
@@ -109,8 +126,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            ema_Ll1depth_for_log = 0.4 * Ll1depth + 0.6 * ema_Ll1depth_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -124,7 +142,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.densify_until_iter and iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                 dead_mask = (gaussians.get_opacity <= 0.005).squeeze(-1)
                 gaussians.relocate_gs(dead_mask=dead_mask)
-                gaussians.add_new_gs(cap_max=args.cap_max)
+                gaussians.add_new_gs(cap_max=dataset.cap_max)
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -137,7 +155,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 def op_sigmoid(x, k=100, x0=0.995):
                     return 1 / (1 + torch.exp(-k * (x - x0)))
                 
-                noise = torch.randn_like(gaussians._xyz) * (op_sigmoid(1- gaussians.get_opacity))*args.noise_lr*xyz_lr
+                noise = torch.randn_like(gaussians._xyz) * (op_sigmoid(1- gaussians.get_opacity))*opt.noise_lr*xyz_lr
                 noise = torch.bmm(actual_covariance, noise.unsqueeze(-1)).squeeze(-1)
                 gaussians._xyz.add_(noise)
 
