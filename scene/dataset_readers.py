@@ -1,13 +1,4 @@
-#
-# Copyright (C) 2023, Inria
-# GRAPHDECO research group, https://team.inria.fr/graphdeco
-# All rights reserved.
-#
-# This software is free for non-commercial, research and evaluation use 
-# under the terms of the LICENSE.md file.
-#
-# For inquiries contact  george.drettakis@inria.fr
-#
+# scene/dataset_readers.py
 
 import os
 import sys
@@ -129,7 +120,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, init_type="sfm", num_pts=100000):
+def readColmapSceneInfo(path, images, eval, llffhold=8, init_type="sfm", num_pts=100000, args=None):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -146,8 +137,16 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, init_type="sfm", num_pts
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        if args and args.test_indices_file and os.path.exists(args.test_indices_file):
+            print(f"Reading test indices from {args.test_indices_file}")
+            with open(args.test_indices_file, 'r') as f:
+                test_indices_data = json.load(f)
+            test_indices = set(test_indices_data["test_ids"])
+            train_cam_infos = [c for i, c in enumerate(cam_infos) if i not in test_indices]
+            test_cam_infos = [c for i, c in enumerate(cam_infos) if i in test_indices]
+        else:
+            train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+            test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
@@ -201,7 +200,13 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
-            cam_name = os.path.join(path, frame["file_path"] + extension)
+            file_path = frame["file_path"]
+            # Ensure file_path has an extension, add if missing
+            if '.' not in os.path.basename(file_path):
+                file_path += extension
+
+            image_path = os.path.join(path, file_path)
+            image_name = Path(file_path).stem
 
             # NeRF 'transform_matrix' is a camera-to-world transform
             c2w = np.array(frame["transform_matrix"])
@@ -213,8 +218,6 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
             T = w2c[:3, 3]
 
-            image_path = os.path.join(path, cam_name)
-            image_name = Path(cam_name).stem
             image = Image.open(image_path)
 
             im_data = np.array(image.convert("RGBA"))
@@ -234,11 +237,23 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
-    print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
-    print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+def readNerfSyntheticInfo(path, white_background, eval, extension=".png", args=None):
+    if args and args.test_indices_file and os.path.exists(args.test_indices_file):
+        print(f"Reading test indices from {args.test_indices_file}")
+        with open(args.test_indices_file, 'r') as f:
+            test_indices_data = json.load(f)
+        test_indices = set(test_indices_data["test_ids"])
+
+        print("Reading all cameras from transforms_train.json")
+        all_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+        
+        train_cam_infos = [c for c in all_cam_infos if c.uid not in test_indices]
+        test_cam_infos = [c for c in all_cam_infos if c.uid in test_indices]
+    else:
+        print("Reading Training Transforms")
+        train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+        print("Reading Test Transforms")
+        test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)

@@ -56,6 +56,7 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.cap_max = -1
         self.init_type = "random"
+        self.test_indices_file = ""
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
