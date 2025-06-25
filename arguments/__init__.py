@@ -50,6 +50,7 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
+        self._depths = ""
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
@@ -68,6 +69,7 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
+        self.antialiasing = False
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
@@ -90,6 +92,8 @@ class OptimizationParams(ParamGroup):
         self.densify_grad_threshold = 0.0002
         self.random_background = False
         self.noise_lr = 5e5
+        self.depth_l1_weight_init = 1.0
+        self.depth_l1_weight_final = 0.01
         self.scale_reg = 0.01
         self.opacity_reg = 0.01
         super().__init__(parser, "Optimization Parameters")

@@ -17,7 +17,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, get_expon_lr_func
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -51,6 +51,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
+    ema_depth_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
@@ -93,11 +94,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image = render_pkg["render"]
+        depth_image = render_pkg["depth"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+
+        # Depth Loss
+        depth_l1_weight_schedule = get_expon_lr_func(lr_init=opt.depth_l1_weight_init, lr_final=opt.depth_l1_weight_final, max_steps=opt.iterations)
+        depth_loss = 0.0
+        if depth_l1_weight_schedule(iteration) > 0 and viewpoint_cam.depth_reliable:
+            inv_depth = depth_image
+            mono_invdepth = viewpoint_cam.invdepthmap
+            depth_mask = viewpoint_cam.depth_mask
+            depth_loss = torch.abs((inv_depth - mono_invdepth) * depth_mask).mean() * depth_l1_weight_schedule(iteration)
+            loss += depth_loss
+
 
         loss = loss + args.opacity_reg * torch.abs(gaussians.get_opacity).mean()
         loss = loss + args.scale_reg * torch.abs(gaussians.get_scaling).mean()
@@ -109,8 +123,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            ema_depth_loss_for_log = 0.4 * depth_loss.item() if isinstance(depth_loss, torch.Tensor) else 0.4 * depth_loss + 0.6 * ema_depth_loss_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Depth": f"{ema_depth_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -199,9 +214,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
 
-        if tb_writer:
-            tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-            tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+        # if tb_writer:
+        #     tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+        #     tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
 def load_config(config_file):
