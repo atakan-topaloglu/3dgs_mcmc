@@ -144,7 +144,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000):
+def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -198,8 +198,18 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                                            test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
-    train_cam_infos = [c for c in cam_infos if not c.is_test]
+    train_cam_infos_full = [c for c in cam_infos if not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
+
+    if num_train_views != -1 and len(train_cam_infos_full) > num_train_views:
+        print(f"Downsampling training cameras from {len(train_cam_infos_full)} to {num_train_views}")
+        indices = np.linspace(0, len(train_cam_infos_full) - 1, num_train_views, dtype=int)
+        train_cam_infos = [train_cam_infos_full[i] for i in indices]
+    else:
+        train_cam_infos = train_cam_infos_full
+
+    print("Test cameras: " + ", ".join(sorted([c.image_name for c in test_cam_infos])))
+    print("Train cameras: " + ", ".join(sorted([c.image_name for c in train_cam_infos])))
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
