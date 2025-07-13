@@ -224,7 +224,6 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
         print(f"Found synthetic images directory at: {synth_dir}")
         for train_cam in cam_infos:
             synthetic_image_path = os.path.join(synth_dir, train_cam.image_name)
-            print(f"Synthetic image path: {synthetic_image_path}")
             if os.path.exists(synthetic_image_path):
                 try:
                     synth_img = Image.open(synthetic_image_path)

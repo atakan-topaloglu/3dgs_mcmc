@@ -58,7 +58,7 @@ class ModelParams(ParamGroup):
         self.num_train_views = -1
         self.cap_max = -1
         self.init_type = "random"
-        self.gt_synthetic_train_img_ratio = -1.0
+        self.gt_synthetic_train_img_ratio = 1.0
         self.synth_img_directory = "synthetic"
         super().__init__(parser, "Loading Parameters", sentinel)
 
