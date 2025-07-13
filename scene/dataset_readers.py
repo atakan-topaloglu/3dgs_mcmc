@@ -144,7 +144,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1):
+def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1, synth_img_directory="synthetic"):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -198,6 +198,17 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                                            test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
+    synth_dir = os.path.join(path, synth_img_directory)
+    if os.path.exists(synth_dir):
+        test_cam_names = {c.image_name for c in cam_infos if c.is_test}
+        synthetic_image_names = {f for f in os.listdir(synth_dir)}
+        contamination = test_cam_names.intersection(synthetic_image_names)
+        if contamination:
+            print(f"\n[WARNING] Test set contamination detected! The following test images have synthetic counterparts:")
+            for name in sorted(list(contamination)):
+                print(f" - {name}")
+
+
     train_cam_infos_full = [c for c in cam_infos if not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
@@ -208,8 +219,34 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
     else:
         train_cam_infos = train_cam_infos_full
 
+    synthetic_cam_infos = []
+    if os.path.exists(synth_dir):
+        print(f"Found synthetic images directory at: {synth_dir}")
+        for train_cam in cam_infos:
+            synthetic_image_path = os.path.join(synth_dir, train_cam.image_name)
+            print(f"Synthetic image path: {synthetic_image_path}")
+            if os.path.exists(synthetic_image_path):
+                try:
+                    synth_img = Image.open(synthetic_image_path)
+                    width, height = synth_img.size
+                except Exception as e:
+                    print(f"\n[WARNING] Could not read synthetic image {synthetic_image_path}. Skipping. Error: {e}")
+                    continue
+
+                synth_cam_info = train_cam._replace(
+                    image_path=synthetic_image_path,
+                    width=width,
+                    height=height,
+                    depth_path="",
+                    depth_params=None,
+                    is_test=False
+                )
+                synthetic_cam_infos.append(synth_cam_info)
+        print(f"Found {len(synthetic_cam_infos)} synthetic training images.")
+
     print("Test cameras: " + ", ".join(sorted([c.image_name for c in test_cam_infos])))
     print("Train cameras: " + ", ".join(sorted([c.image_name for c in train_cam_infos])))
+    print("Synthetic cameras: " + ", ".join(sorted([c.image_name for c in synthetic_cam_infos])))
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
@@ -250,7 +287,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
                            is_nerf_synthetic=False)
-    return scene_info
+    return scene_info, synthetic_cam_infos
 
 def readCamerasFromTransforms(path, transformsfile, depths_folder, white_background, is_test, extension=".png"):
     cam_infos = []
@@ -334,7 +371,7 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
                            is_nerf_synthetic=True)
-    return scene_info
+    return scene_info, []
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,

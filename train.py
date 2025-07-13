@@ -14,6 +14,7 @@ import json
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
+import random
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -52,6 +53,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     ema_depth_loss_for_log = 0.0
+    ema_synthetic_loss_for_log = 0.0
+
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
@@ -80,11 +83,35 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        gt_cam_list = scene.getTrainCameras()
+        synth_cam_list = scene.getSyntheticTrainCameras()
+
+        if not gt_cam_list and not synth_cam_list:
+            raise ValueError("No training images (GT or synthetic) found.")
+
+        # If no synthetic images are available, just sample from GT
+        if not synth_cam_list:
+            viewpoint_cam = gt_cam_list[randint(0, len(gt_cam_list) - 1)]
         else:
-            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+            all_cams = gt_cam_list + synth_cam_list
+            
+            # Determine the weighting for individual images
+            ratio = scene.gt_synthetic_train_img_ratio
+            if ratio < 0:  # Default case: equal probability for every individual image
+                gt_weight = 1.0
+                synth_weight = 1.0
+            else: # User-defined ratio
+                gt_weight = ratio
+                synth_weight = 1.0 - ratio
+
+            # Create a list of weights for weighted random sampling
+            weights = [gt_weight] * len(gt_cam_list) + [synth_weight] * len(synth_cam_list)
+
+            # Perform weighted random sampling to pick one camera
+            if sum(weights) > 0:
+                viewpoint_cam = random.choices(all_cams, weights=weights, k=1)[0]
+            else: # Fallback if all weights are zero (e.g., ratio=1 but no GT images)
+                viewpoint_cam = all_cams[randint(0, len(all_cams) - 1)]
 
         # Render
         if (iteration - 1) == debug_from:
@@ -97,24 +124,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         depth_image = render_pkg["depth"]
 
         # Loss
+        use_synthetic = viewpoint_cam.is_synthetic
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
 
         # Depth Loss
-        depth_l1_weight_schedule = get_expon_lr_func(lr_init=opt.depth_l1_weight_init, lr_final=opt.depth_l1_weight_final, max_steps=opt.iterations)
         depth_loss = 0.0
-        if depth_l1_weight_schedule(iteration) > 0 and viewpoint_cam.depth_reliable:
-            inv_depth = depth_image
-            mono_invdepth = viewpoint_cam.invdepthmap
-            depth_mask = viewpoint_cam.depth_mask
-            depth_loss = torch.abs((inv_depth - mono_invdepth) * depth_mask).mean() * depth_l1_weight_schedule(iteration)
-            loss += depth_loss
+        if not use_synthetic:
+            depth_l1_weight_schedule = get_expon_lr_func(lr_init=opt.depth_l1_weight_init, lr_final=opt.depth_l1_weight_final, max_steps=opt.iterations)
+            if depth_l1_weight_schedule(iteration) > 0 and viewpoint_cam.depth_reliable:
+                inv_depth = depth_image
+                mono_invdepth = viewpoint_cam.invdepthmap
+                depth_mask = viewpoint_cam.depth_mask
+                depth_loss = torch.abs((inv_depth - mono_invdepth) * depth_mask).mean() * depth_l1_weight_schedule(iteration)
+                loss += depth_loss
+                depth_loss_value = depth_loss.item()
 
-
-        loss = loss + args.opacity_reg * torch.abs(gaussians.get_opacity).mean()
-        loss = loss + args.scale_reg * torch.abs(gaussians.get_scaling).mean()
+        loss = loss + opt.opacity_reg * torch.abs(gaussians.get_opacity).mean()
+        loss = loss + opt.scale_reg * torch.abs(gaussians.get_scaling).mean()
 
         loss.backward()
 
@@ -122,16 +151,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         with torch.no_grad():
             # Progress bar
-            ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-            ema_depth_loss_for_log = 0.4 * depth_loss.item() if isinstance(depth_loss, torch.Tensor) else 0.4 * depth_loss + 0.6 * ema_depth_loss_for_log
+            if use_synthetic:
+                ema_synthetic_loss_for_log = 0.4 * loss.item() + 0.6 * ema_synthetic_loss_for_log
+            else:
+                ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+                ema_depth_loss_for_log = 0.4 * depth_loss_value + 0.6 * ema_depth_loss_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Depth": f"{ema_depth_loss_for_log:.{7}f}"})
+                progress_bar.set_postfix({"GT Loss": f"{ema_loss_for_log:.{7}f}",
+                                            "Synth Loss": f"{ema_synthetic_loss_for_log:.{7}f}",
+                                            "Depth": f"{ema_depth_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), use_synthetic)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -182,10 +216,14 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, is_synthetic):
     if tb_writer:
-        tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
-        tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
+        if is_synthetic:
+            tb_writer.add_scalar('train_loss_patches/synthetic_l1_loss', Ll1.item(), iteration)
+            tb_writer.add_scalar('train_loss_patches/synthetic_total_loss', loss.item(), iteration)
+        else:
+            tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
+            tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
     # Report test and samples of training set

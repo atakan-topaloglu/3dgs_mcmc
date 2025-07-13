@@ -19,7 +19,7 @@ class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask, invdepthmap,
                    image_name, uid,
                     depth_params,
-                   trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
+                   trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", is_synthetic=False
                    ):
         super(Camera, self).__init__()
 
@@ -30,6 +30,7 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
+        self.is_synthetic = is_synthetic
 
         try:
             self.data_device = torch.device(data_device)
@@ -49,7 +50,7 @@ class Camera(nn.Module):
 
         self.invdepthmap = None
         self.depth_reliable = False
-        if invdepthmap is not None:
+        if invdepthmap is not None and not self.is_synthetic:
            self.depth_mask = torch.ones_like(self.original_image[0:1, ...])
            self.invdepthmap = cv2.resize(invdepthmap, (self.image_width, self.image_height))
            self.invdepthmap[self.invdepthmap < 0] = 0

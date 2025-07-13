@@ -29,6 +29,7 @@ class Scene:
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
+        self.gt_synthetic_train_img_ratio = args.gt_synthetic_train_img_ratio
 
         if load_iteration:
             if load_iteration == -1:
@@ -39,12 +40,23 @@ class Scene:
 
         self.train_cameras = {}
         self.test_cameras = {}
+        self.synthetic_train_cameras = {}
+
+        scene_info = None
+        synthetic_cameras = None
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views)
+            scene_info, synthetic_cameras = sceneLoadTypeCallbacks["Colmap"](
+                path=args.source_path, 
+                images=args.images, 
+                depths=args.depths, 
+                eval=args.eval, 
+                init_type=args.init_type, 
+                num_train_views=args.num_train_views, 
+                synth_img_directory=args.synth_img_directory)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.depths, args.eval)
+            scene_info, synthetic_cameras = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.depths, args.eval)
         else:
             assert False, "Could not recognize scene type!"
 
@@ -65,6 +77,8 @@ class Scene:
         if shuffle:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+            if synthetic_cameras:
+                random.shuffle(synthetic_cameras)
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -74,6 +88,10 @@ class Scene:
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args, scene_info.is_nerf_synthetic)
 
+            if synthetic_cameras:
+                print("Loading Synthetic Training Cameras")
+                self.synthetic_train_cameras[resolution_scale] = cameraList_from_camInfos(synthetic_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, is_synthetic=True)
+        
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                            "point_cloud",
@@ -88,6 +106,9 @@ class Scene:
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
+    
+    def getSyntheticTrainCameras(self, scale=1.0):
+        return self.synthetic_train_cameras.get(scale, [])
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
