@@ -71,7 +71,7 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask, invdepthmap=invdepthmap,
-                  depth_params=cam_info.depth_params,
+                  depth_params=cam_info.depth_params, is_synthetic=cam_info.is_synthetic,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args, is_nerf_synthetic):

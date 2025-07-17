@@ -36,6 +36,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     is_test: bool
+    is_synthetic: bool
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -81,6 +82,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
         height = intr.height
         width = intr.width
 
+        image_path = os.path.join(images_folder, os.path.basename(extr.name))
+
+        if not os.path.exists(image_path):
+            print(f"\n[Warning] Image {extr.name} not found, skipping.")
+            continue
+
         uid = intr.id
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
@@ -105,16 +112,16 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
             except:
                 print("\n", key, "not found in depths_params")
 
-        image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = extr.name
         depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
 
         is_test = image_name in test_cam_names_list
+        is_synthetic = "_synthetic" in image_name
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX,
                               image_path=image_path, image_name=image_name,
                               width=width, height=height, depth_path=depth_path,
-                              depth_params=depth_params_cam, is_test=is_test)
+                              depth_params=depth_params_cam, is_test=is_test, is_synthetic=is_synthetic)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -177,7 +184,11 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
             print(f"An unexpected error occurred when trying to open depth_params.json file: {e}")
             sys.exit(1)
 
+    reading_dir = "images" if images == None else images
+    all_cam_names = sorted([cam_extrinsics[cam_id].name for cam_id in cam_extrinsics])
+    real_cam_names = sorted([name for name in all_cam_names if "_synthetic" not in name])
     test_cam_names_list = []
+    
     if eval:
         test_txt_path = os.path.join(path, "sparse/0", "test.txt")
         if os.path.exists(test_txt_path):
@@ -186,11 +197,8 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                 test_cam_names_list = [line.strip() for line in file]
         else:
             print("test.txt not found, falling back to llffhold split.")
-            cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
-            cam_names = sorted(cam_names)
-            test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
+            test_cam_names_list = [name for idx, name in enumerate(real_cam_names) if idx % llffhold == 0]
 
-    reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics,
                                            images_folder=os.path.join(path, reading_dir),
                                            depths_folder=os.path.join(path, depths) if depths != "" else "",
@@ -198,20 +206,27 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                                            test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
-    train_cam_infos_full = [c for c in cam_infos if not c.is_test]
-    test_cam_infos = [c for c in cam_infos if c.is_test]
+    real_cam_infos = [c for c in cam_infos if not c.is_synthetic]
+    synthetic_cam_infos = [c for c in cam_infos if c.is_synthetic]
 
-    if num_train_views != -1 and len(train_cam_infos_full) > num_train_views:
-        print(f"Downsampling training cameras from {len(train_cam_infos_full)} to {num_train_views}")
-        indices = np.linspace(0, len(train_cam_infos_full) - 1, num_train_views, dtype=int)
-        train_cam_infos = [train_cam_infos_full[i] for i in indices]
+    train_cam_infos_full_real = [c for c in real_cam_infos if not c.is_test]
+    test_cam_infos = [c for c in real_cam_infos if c.is_test]
+
+    if num_train_views != -1 and len(train_cam_infos_full_real) > num_train_views:
+        print(f"Downsampling real training cameras from {len(train_cam_infos_full_real)} to {num_train_views}")
+        indices = np.linspace(0, len(train_cam_infos_full_real) - 1, num_train_views, dtype=int)
+        train_cam_infos_real = [train_cam_infos_full_real[i] for i in indices]
     else:
-        train_cam_infos = train_cam_infos_full
+        train_cam_infos_real = train_cam_infos_full_real
+
+    train_cam_infos = train_cam_infos_real + synthetic_cam_infos
 
     print("Test cameras: " + ", ".join(sorted([c.image_name for c in test_cam_infos])))
-    print("Train cameras: " + ", ".join(sorted([c.image_name for c in train_cam_infos])))
+    print("Train cameras (GT): " + ", ".join(sorted([c.image_name for c in train_cam_infos_real])))
+    if synthetic_cam_infos:
+        print("Train cameras (synthetic): " + ", ".join(sorted([c.image_name for c in synthetic_cam_infos])))
 
-    nerf_normalization = getNerfppNorm(train_cam_infos)
+    nerf_normalization = getNerfppNorm(train_cam_infos_real)
 
     if init_type == "sfm":
         ply_path = os.path.join(path, "sparse/0/points3D.ply")

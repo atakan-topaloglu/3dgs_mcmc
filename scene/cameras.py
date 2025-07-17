@@ -18,7 +18,7 @@ import cv2
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask, invdepthmap,
                    image_name, uid,
-                    depth_params,
+                    depth_params, is_synthetic=False,
                    trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
                    ):
         super(Camera, self).__init__()
@@ -30,6 +30,7 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
+        self.is_synthetic = is_synthetic
 
         try:
             self.data_device = torch.device(data_device)
