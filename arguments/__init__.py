@@ -97,6 +97,7 @@ class OptimizationParams(ParamGroup):
         self.depth_l1_weight_final = 0.01
         self.scale_reg = 0.01
         self.opacity_reg = 0.01
+        self.gt_synth_ratio = -1.0
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

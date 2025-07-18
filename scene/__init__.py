@@ -39,6 +39,8 @@ class Scene:
 
         self.train_cameras = {}
         self.test_cameras = {}
+        self.train_gt_cameras = {}
+        self.train_synthetic_cameras = {}
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views)
@@ -70,7 +72,10 @@ class Scene:
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic)
+            all_train_cams = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic)
+            self.train_gt_cameras[resolution_scale] = [c for c in all_train_cams if not c.is_synthetic]
+            self.train_synthetic_cameras[resolution_scale] = [c for c in all_train_cams if c.is_synthetic]
+            self.train_cameras[resolution_scale] = self.train_gt_cameras[resolution_scale] + self.train_synthetic_cameras[resolution_scale]
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args, scene_info.is_nerf_synthetic)
 
@@ -91,3 +96,13 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
+    
+
+    def getTrainGTCameras(self, scale=1.0):
+        return self.train_gt_cameras.get(scale, [])
+
+    def getTrainSyntheticCameras(self, scale=1.0):
+        return self.train_synthetic_cameras.get(scale, [])
+
+    def getTestCameras(self, scale=1.0):
+         return self.test_cameras[scale]

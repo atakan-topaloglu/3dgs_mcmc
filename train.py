@@ -50,6 +50,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_end = torch.cuda.Event(enable_timing = True)
 
     viewpoint_stack = None
+    gt_viewpoint_stack = None
+    synth_viewpoint_stack = None
+
+    train_gt_cameras = scene.getTrainGTCameras().copy()
+    train_synthetic_cameras = scene.getTrainSyntheticCameras().copy()
+
+    use_ratio_sampling = opt.gt_synth_ratio > 0 and len(train_gt_cameras) > 0 and len(train_synthetic_cameras) > 0
     ema_loss_for_log = 0.0
     ema_synthetic_loss_for_log = 0.0
     ema_depth_loss_for_log = 0.0
@@ -81,10 +88,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        if use_ratio_sampling:
+            # Decide whether to use GT or synthetic camera
+            if torch.rand(1).item() < (opt.gt_synth_ratio / (opt.gt_synth_ratio + 1.0)):
+                # Pick from GT
+                if not gt_viewpoint_stack:
+                    gt_viewpoint_stack = train_gt_cameras.copy()
+                viewpoint_cam = gt_viewpoint_stack.pop(randint(0, len(gt_viewpoint_stack) - 1))
+            else:
+                # Pick from synthetic
+                if not synth_viewpoint_stack:
+                    synth_viewpoint_stack = train_synthetic_cameras.copy()
+                viewpoint_cam = synth_viewpoint_stack.pop(randint(0, len(synth_viewpoint_stack) - 1))
         else:
+            if not viewpoint_stack:
+                viewpoint_stack = scene.getTrainCameras().copy()
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         # Render
