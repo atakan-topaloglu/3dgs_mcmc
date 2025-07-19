@@ -21,7 +21,7 @@ WARNED = False
 def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic):
     image = Image.open(cam_info.image_path)
 
-    if cam_info.depth_path != "":
+    if cam_info.depth_path != "" and not cam_info.is_synthetic:
         try:
             if is_nerf_synthetic:
                 invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / 512

@@ -29,6 +29,7 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+from lpipsPyTorch import LPIPS
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     if dataset.cap_max == -1:
@@ -42,6 +43,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
+    
+    lpips_vgg = LPIPS(net_type='vgg').to("cuda")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -118,13 +121,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        gt_loss = 0.0
+        synth_loss = 0.0
 
+        if not viewpoint_cam.is_synthetic:
+            gt_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        else:
+            # The LPIPS loss is only applied to synthetic views
+            lpips_loss = lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
+            synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + opt.lambda_lpips * lpips_loss
+        
+        loss = gt_loss + synth_loss
 
         # Depth Loss
         depth_l1_weight_schedule = get_expon_lr_func(lr_init=opt.depth_l1_weight_init, lr_final=opt.depth_l1_weight_final, max_steps=opt.iterations)
         depth_loss = 0.0
-        if depth_l1_weight_schedule(iteration) > 0 and viewpoint_cam.depth_reliable:
+        if depth_l1_weight_schedule(iteration) > 0 and viewpoint_cam.depth_reliable and not viewpoint_cam.is_synthetic:
             inv_depth = depth_image
             mono_invdepth = viewpoint_cam.invdepthmap
             depth_mask = viewpoint_cam.depth_mask
