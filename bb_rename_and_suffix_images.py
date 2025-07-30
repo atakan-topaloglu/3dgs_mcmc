@@ -2,28 +2,32 @@ import os
 import json
 import shutil
 import argparse
+import re
 
-def rename_and_suffix_images(split_file_path, transforms_file_path, input_dir, output_dir):
+def rename_and_suffix_images(split_file_path, transforms_file_path, input_dir, dataset_root_dir):
     """
-    Renames images, adds a suffix, and saves them to an existing directory.
+    Renames images based on a transforms file and saves them to a synthetic
+    data directory (e.g., 'synthetic_12'), which is determined from the
+    split file name.
 
     This function reads a list of 'test_ids' from a split file, finds the
     corresponding 'file_path' for each ID in a transforms file, and copies
-    the images from the input directory to an output directory. The new
-    filenames will have a '_synthetic' suffix added before the extension.
+    the images from the input directory to a 'synthetic_XX' directory within
+    the dataset root. The number XX is parsed from the split file name.
+    The new filenames will match the original filenames from the transforms file,
+    without any suffix.
 
     Args:
         split_file_path (str): Path to the train_test_split[...].json file.
         transforms_file_path (str): Path to the transforms.json file.
         input_dir (str): Path to the directory containing the original images.
-        output_dir (str): Path to the directory where renamed images will be saved.
-                          This directory MUST exist and MUST NOT be empty.
+        dataset_root_dir (str): Path to the root of the dataset, where the
+                                'synthetic_XX' directory will be created.
 
     Raises:
-        FileNotFoundError: If any of the input files, the input directory, or the
-                           output directory do not exist or are not directories.
-        ValueError: If the number of images in the input directory does not match
-                    the number of 'test_ids', or if the output directory is empty.
+        FileNotFoundError: If any of the input files or the input directory do not exist.
+        ValueError: If the number of images in the input directory does not match the
+                    number of 'test_ids', or if the number cannot be parsed from the split file name.
         KeyError: If a 'test_id' from the split file cannot be found in the
                   transforms file.
     """
@@ -36,10 +40,14 @@ def rename_and_suffix_images(split_file_path, transforms_file_path, input_dir, o
             raise FileNotFoundError(f"Error: The input path '{path}' does not exist.")
 
     # Validate output directory as per requirements
-    if not os.path.isdir(output_dir):
-        raise FileNotFoundError(f"Error: The destination directory '{output_dir}' does not exist or is not a directory.")
-    if not os.listdir(output_dir):
-        raise ValueError(f"Error: The destination directory '{output_dir}' must not be empty.")
+    match = re.search(r'train_test_split_(\d+)\.json$', os.path.basename(split_file_path))
+    if not match:
+        raise ValueError(f"Could not extract view count from split file name: '{os.path.basename(split_file_path)}'. "
+                         "Expected format: train_test_split_XX.json")
+    num_views = match.group(1)
+    output_dir = os.path.join(dataset_root_dir, f"synthetic_{num_views}")
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Output directory set to: '{output_dir}'")
 
     try:
         with open(split_file_path, 'r') as f:
@@ -96,15 +104,10 @@ def rename_and_suffix_images(split_file_path, transforms_file_path, input_dir, o
         # Get base filename from transforms.json
         target_basename = os.path.basename(target_relative_path)
         
-        # Add the '_synthetic' suffix before the file extension
-        name, ext = os.path.splitext(target_basename)
-        suffixed_basename = f"{name}_synthetic{ext}"
-        
-        # Construct the full destination path
-        destination_path = os.path.join(output_dir, suffixed_basename)
+        destination_path = os.path.join(output_dir, target_basename)
 
         # Copy the file to the new location with the new name
-        print(f"  - Mapping '{source_image_name}' (id: {test_id}) -> '{suffixed_basename}'")
+        print(f"  - Mapping '{source_image_name}' (id: {test_id}) -> '{target_basename}'")
         shutil.copy2(source_path, destination_path)
 
     print("\nSuccessfully processed and saved all images.")
@@ -113,7 +116,8 @@ def rename_and_suffix_images(split_file_path, transforms_file_path, input_dir, o
 def main():
     """Main function to parse arguments and run the script."""
     parser = argparse.ArgumentParser(
-        description="Renames image files based on JSON mappings, adds a '_synthetic' suffix, and saves them to a new directory.",
+        description="Renames synthetic images and places them in the correct 'synthetic_XX' directory "
+                    "based on the provided split file.",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
@@ -138,8 +142,7 @@ def main():
         '--output_dir',
         type=str,
         required=True,
-        help="Directory where the renamed images will be saved.\n"
-             "This directory must already exist and must not be empty."
+        help="Root directory of the dataset. The script will create a 'synthetic_XX' sub-directory here."
     )
 
     args = parser.parse_args()

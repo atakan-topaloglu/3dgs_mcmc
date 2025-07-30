@@ -29,7 +29,7 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
-from lpipsPyTorch import LPIPS
+# from lpipsPyTorch import LPIPS
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     if dataset.cap_max == -1:
@@ -44,7 +44,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
     
-    lpips_vgg = LPIPS(net_type='vgg').to("cuda")
+    # lpips_vgg = LPIPS(net_type='vgg').to("cuda")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -128,8 +128,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         else:
             # The LPIPS loss is only applied to synthetic views
-            lpips_loss = lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
-            synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + opt.lambda_lpips * lpips_loss
+            # lpips_loss = lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
+            synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) # + opt.lambda_lpips * lpips_loss
         
         loss = gt_loss + synth_loss
 

@@ -57,11 +57,14 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.num_train_views = -1
         self.cap_max = -1
+        self.train_on_test_synth = False
         self.init_type = "random"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
         g = super().extract(args)
+        if not hasattr(g, 'train_on_test_synth'): # This is a hack to avoid the error when the argument is not provided, remove this if you want to see the error
+            g.train_on_test_synth = self.train_on_test_synth
         g.source_path = os.path.abspath(g.source_path)
         return g
 

@@ -11,6 +11,7 @@
 
 import os
 import sys
+import glob
 from PIL import Image
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
@@ -69,7 +70,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_folder, depths_params, test_cam_names_list):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_folder, depths_params, test_cam_names_list, main_camera_id, synthetic_dir):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -82,10 +83,22 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
         height = intr.height
         width = intr.width
 
-        image_path = os.path.join(images_folder, os.path.basename(extr.name))
+        is_synthetic = (extr.camera_id != main_camera_id)
+    
+        if is_synthetic:
+            if not synthetic_dir:
+                # This can happen if inject_synthetic_data.py was run but the synthetic images folder doesn't exist.
+                # It's better to skip than to fail.
+                print(f"\n[Warning] Image '{extr.name}' (id: {extr.id}) is linked to a non-main camera (ID: {extr.camera_id}), "
+                      f"but no 'synthetic_*' directory was found. Skipping this synthetic view.")
+                continue
+            image_path = os.path.join(synthetic_dir, os.path.basename(extr.name))
+        else:
+            image_path = os.path.join(images_folder, os.path.basename(extr.name))
+
 
         if not os.path.exists(image_path):
-            print(f"\n[Warning] Image {extr.name} not found, skipping.")
+            print(f"\n[Warning] Image {extr.name} not found at '{image_path}', skipping.")
             continue
 
         uid = intr.id
@@ -115,8 +128,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
         image_name = extr.name
         depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
 
-        is_test = image_name in test_cam_names_list
-        is_synthetic = "_synthetic" in image_name
+        is_test = (image_name in test_cam_names_list) and not is_synthetic
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX,
                               image_path=image_path, image_name=image_name,
@@ -151,7 +163,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1):
+def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1, train_on_test_synth=False):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -164,6 +176,23 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
     
     depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
+
+    # Find the main camera ID (typically the one with the highest resolution) and the synthetic images directory.
+    main_camera_id = -1
+    max_res = 0
+    for cam_id, intr in cam_intrinsics.items():
+        res = intr.width * intr.height
+        if res > max_res:
+            max_res = res
+            main_camera_id = cam_id
+
+    synthetic_dir = ""
+    # Find a directory starting with "synthetic_"
+    synth_dirs = glob.glob(os.path.join(path, "synthetic_*"))
+    if synth_dirs:
+        synthetic_dir = synth_dirs[0]
+        print(f"Found synthetic directory: {synthetic_dir}")
+
     depths_params = None
     if depths != "":
         try:
@@ -186,7 +215,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
     reading_dir = "images" if images == None else images
     all_cam_names = sorted([cam_extrinsics[cam_id].name for cam_id in cam_extrinsics])
-    real_cam_names = sorted([name for name in all_cam_names if "_synthetic" not in name])
+    real_cam_names = sorted(list(set(all_cam_names)))
     test_cam_names_list = []
     
     if eval:
@@ -202,8 +231,10 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics,
                                            images_folder=os.path.join(path, reading_dir),
                                            depths_folder=os.path.join(path, depths) if depths != "" else "",
-                                           depths_params=depths_params,
-                                           test_cam_names_list=test_cam_names_list)
+                                           depths_params=depths_params, 
+                                           test_cam_names_list=test_cam_names_list,
+                                           main_camera_id=main_camera_id,
+                                           synthetic_dir=synthetic_dir)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     real_cam_infos = [c for c in cam_infos if not c.is_synthetic]
@@ -211,6 +242,15 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
     train_cam_infos_full_real = [c for c in real_cam_infos if not c.is_test]
     test_cam_infos = [c for c in real_cam_infos if c.is_test]
+
+
+    if not train_on_test_synth:
+        test_image_names = {c.image_name for c in test_cam_infos}
+        original_synth_count = len(synthetic_cam_infos)
+        synthetic_cam_infos = [c for c in synthetic_cam_infos if c.image_name not in test_image_names]
+        filtered_count = original_synth_count - len(synthetic_cam_infos)
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} synthetic views that correspond to test viewpoints. Use --train_on_test_synth to include them.")
 
     if num_train_views != -1 and len(train_cam_infos_full_real) > num_train_views:
         print(f"Downsampling real training cameras from {len(train_cam_infos_full_real)} to {num_train_views}")

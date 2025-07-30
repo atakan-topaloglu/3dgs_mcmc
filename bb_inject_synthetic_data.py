@@ -88,39 +88,8 @@ def main():
         print("Error: No cameras found in the reconstruction.")
         return
         
-    # --- MODIFICATION START ---
-    # Permanently divide the first camera's parameters by 4.
-    cam_to_modify_id = min(rec.cameras.keys())
-    cam_to_modify = rec.cameras[cam_to_modify_id]
-    
-    print(f"\nPermanently modifying camera ID {cam_to_modify_id} by dividing by 4...")
-    print("  - Before modification:")
-    print(f"    ID: {cam_to_modify.camera_id}, Model: {cam_to_modify.model.name}, "
-          f"Width: {cam_to_modify.width}, Height: {cam_to_modify.height}")
-    print(f"    Params: {cam_to_modify.params_to_string()}")
-
-    # Scale dimensions, rounding up to the nearest integer
-    cam_to_modify.width = int(math.ceil(cam_to_modify.width / 4.0))
-    cam_to_modify.height = int(math.ceil(cam_to_modify.height / 4.0))
-
-    # Scale intrinsics by the same factor of 4
-    if len(cam_to_modify.focal_length_idxs()) == 1:
-        cam_to_modify.focal_length /= 4.0
-    elif len(cam_to_modify.focal_length_idxs()) == 2:
-        cam_to_modify.focal_length_x /= 4.0
-        cam_to_modify.focal_length_y /= 4.0
-
-    if len(cam_to_modify.principal_point_idxs()) > 0:
-        cam_to_modify.principal_point_x /= 4.0
-        cam_to_modify.principal_point_y /= 4.0
-    
-    print("  - After modification:")
-    print(f"    ID: {cam_to_modify.camera_id}, Model: {cam_to_modify.model.name}, "
-          f"Width: {cam_to_modify.width}, Height: {cam_to_modify.height}")
-    print(f"    Params: {cam_to_modify.params_to_string()}")
-    # --- MODIFICATION END ---
-
-    # 1. Create the synthetic camera, using the now-modified camera as the reference.
+    ref_cam_id = min(rec.cameras.keys())
+    cam_to_modify = rec.cameras[ref_cam_id]
     new_cam_id = (max(rec.cameras.keys()) + 1) if rec.cameras else 1
     synth_cam = create_synthetic_camera(cam_to_modify, new_cam_id, args.width, args.height)
     rec.add_camera(synth_cam)
@@ -151,8 +120,7 @@ def main():
         synth_image = pycolmap.Image()
         synth_image.image_id = max_image_id
         synth_image.camera_id = synth_cam.camera_id
-        p = Path(image.name)
-        synth_image.name = f"{p.stem}_synthetic{p.suffix}"
+        synth_image.name = image.name
         clean_points2D = [pycolmap.Point2D(p2d.xy) for p2d in image.points2D]
         synth_image.points2D = clean_points2D
 
