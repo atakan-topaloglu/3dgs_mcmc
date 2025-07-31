@@ -135,9 +135,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if sigma > 0:
                     # Kernel size must be an odd integer.
                     kernel_size = 2 * int(3.0 * sigma) + 1
-                    blurred_render = gaussian_blur(image.unsqueeze(0), kernel_size, sigma)
                     blurred_gt = gaussian_blur(gt_image.unsqueeze(0), kernel_size, sigma)
-                    synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(blurred_render, blurred_gt))
+                    synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, blurred_gt))
 
             if opt.lambda_lpips > 0:
                 synth_loss += opt.lambda_lpips #* lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
