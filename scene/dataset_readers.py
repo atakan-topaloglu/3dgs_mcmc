@@ -23,6 +23,7 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+import re
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -34,6 +35,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     depth_path: str
     depth_params: dict
+    attention_map_path: str
     width: int
     height: int
     is_test: bool
@@ -70,7 +72,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_folder, depths_params, synthetic_dir, test_cam_names_list):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_folder, depths_params, synthetic_dir, synth_attention_dir, test_cam_names_list):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -117,24 +119,29 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
 
         gt_cam_info = CameraInfo(uid=extr.id, R=np.transpose(qvec2rotmat(extr.qvec)), T=np.array(extr.tvec),
                                  FovY=FovY_gt, FovX=FovX_gt, image_path=image_path, image_name=extr.name,
-                                 width=width_gt, height=height_gt, is_synthetic=False, is_test=is_test,
+                                 width=width_gt, height=height_gt, is_synthetic=False, is_test=is_test, attention_map_path="",
                                  depth_path=depth_path, depth_params=depth_params_cam)
         cam_infos.append(gt_cam_info)
 
-        # --- Check for and create Synthetic CameraInfo ---
         if synthetic_dir:
             synth_image_path = os.path.join(synthetic_dir, os.path.basename(extr.name))
             if os.path.exists(synth_image_path):
                 synth_img = Image.open(synth_image_path)
                 width_synth, height_synth = synth_img.size
                 
+                # DON'T TOUCH THIS, THIS WORKS.
                 FovY_synth = focal2fov(focal_length_y_gt * height_synth / height_gt, height_synth)
                 FovX_synth = focal2fov(focal_length_x_gt * width_synth / width_gt, width_synth)
+
+                synth_attention_path = os.path.join(synth_attention_dir, os.path.basename(extr.name)) if synth_attention_dir else ""
+                if synth_attention_path and not os.path.exists(synth_attention_path):
+                    print(f"\n[Warning] Attention map for {extr.name} not found at '{synth_attention_path}', skipping.")
+                    synth_attention_path = ""
 
                 synth_cam_info = CameraInfo(uid=extr.id, R=np.transpose(qvec2rotmat(extr.qvec)), T=np.array(extr.tvec),
                                             FovY=FovY_synth, FovX=FovX_synth, image_path=synth_image_path, image_name=extr.name,
                                             width=width_synth, height=height_synth, is_synthetic=True, is_test=False,
-                                            depth_path="", depth_params=None)
+                                            depth_path="", depth_params=None, attention_map_path=synth_attention_path)
                 cam_infos.append(synth_cam_info)
 
     sys.stdout.write('\n')
@@ -165,7 +172,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1, train_on_test_synth=False):
+def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1, train_on_test_synth=False, synth_attention_dir=""):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -183,10 +190,13 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
     synthetic_dir = ""
     # Find a directory starting with "synthetic_"
-    synth_dirs = glob.glob(os.path.join(path, "synthetic_*"))
-    if synth_dirs:
-        synthetic_dir = synth_dirs[0]
-        print(f"Found synthetic directory: {synthetic_dir}")
+    # synth_dirs = glob.glob(os.path.join(path, "synthetic_*"))
+    all_dirs = glob.glob(os.path.join(path, "synthetic_*"))
+
+    synthetic_dir = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{2}', os.path.basename(d))][0]
+    # if synth_dirs:
+    #     synthetic_dir = synth_dirs[0]
+    #     print(f"Found synthetic directory: {synthetic_dir}")
 
     depths_params = None
     if depths != "":
@@ -227,8 +237,10 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                                            images_folder=os.path.join(path, reading_dir),
                                            depths_folder=os.path.join(path, depths) if depths != "" else "",
                                            depths_params=depths_params, 
-                                           test_cam_names_list=test_cam_names_list,
-                                           synthetic_dir=synthetic_dir)
+                                           synthetic_dir=synthetic_dir,
+                                            synth_attention_dir=synth_attention_dir,
+                                            test_cam_names_list=test_cam_names_list)
+    
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     real_cam_infos = [c for c in cam_infos if not c.is_synthetic]
@@ -342,7 +354,7 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX,
                             image_path=image_path, image_name=image_name,
-                            width=image.size[0], height=image.size[1], depth_path=depth_path,
+                            width=image.size[0], height=image.size[1], depth_path=depth_path, attention_map_path="",
                             depth_params=None, is_test=is_test))
             
     return cam_infos

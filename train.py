@@ -118,29 +118,45 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image = render_pkg["render"]
-        depth_image = render_pkg["depth"]
+        # depth_image = render_pkg["depth"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        gt_loss = 0.0
-        synth_loss = 0.0
+        loss = 0.0
 
-        if not viewpoint_cam.is_synthetic:
-            gt_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        else:
+        if viewpoint_cam.is_synthetic:
+            target_image = gt_image
             if opt.blur_factor > 0:
                 H, W = viewpoint_cam.image_height, viewpoint_cam.image_width
                 sigma = opt.blur_factor * min(H, W)
                 if sigma > 0:
                     # Kernel size must be an odd integer.
                     kernel_size = 2 * int(3.0 * sigma) + 1
-                    blurred_gt = gaussian_blur(gt_image.unsqueeze(0), kernel_size, sigma)
-                    synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, blurred_gt))
+                    target_image = gaussian_blur(gt_image.unsqueeze(0), kernel_size, sigma).squeeze(0)
 
-            if opt.lambda_lpips > 0:
-                synth_loss += opt.lambda_lpips #* lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
-        loss = gt_loss + synth_loss
+            ssim_loss_term = opt.lambda_dssim * (1.0 - ssim(image, target_image))
+
+            if viewpoint_cam.attention_map is not None:
+                l1_per_pixel = torch.abs(image - target_image)
+                # The attention map is (1, H, W), l1_per_pixel is (C, H, W). They broadcast correctly.
+                weighted_l1 = (l1_per_pixel * viewpoint_cam.attention_map).mean()
+                l1_loss_term = (1.0 - opt.lambda_dssim) * weighted_l1
+            else:
+                # Fallback to original unweighted L1
+                l1_loss_term = (1.0 - opt.lambda_dssim) * l1_loss(image, target_image)
+
+            synth_loss = l1_loss_term + ssim_loss_term
+            # if opt.lambda_lpips > 0:
+            #     synth_loss += opt.lambda_lpips #* lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
+
+            loss += synth_loss
+        else: # Not synthetic
+            Ll1 = l1_loss(image, gt_image)
+            gt_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            loss += gt_loss
+ 
+         # Depth Loss
+        depth_image = render_pkg["depth"]
 
         # Depth Loss
         depth_l1_weight_schedule = get_expon_lr_func(lr_init=opt.depth_l1_weight_init, lr_final=opt.depth_l1_weight_final, max_steps=opt.iterations)

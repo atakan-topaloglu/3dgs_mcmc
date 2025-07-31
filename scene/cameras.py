@@ -14,9 +14,11 @@ from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 import cv2
+import os
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask, invdepthmap,
+                 attention_map_path,
                    image_name, uid,
                     depth_params, is_synthetic=False,
                    trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
@@ -80,6 +82,34 @@ class Camera(nn.Module):
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+
+        self.attention_map = None
+        if is_synthetic and attention_map_path and os.path.exists(attention_map_path):
+            try:
+                # 1. Load grayscale attention map
+                attention_map_raw = cv2.imread(attention_map_path, cv2.IMREAD_GRAYSCALE)
+                
+                # 2. Get dimensions
+                H_att, W_att = attention_map_raw.shape
+                H_img, W_img = self.image_height, self.image_width
+
+                # 3. Crop padding using logic from superimpose_attention.py
+                H_att_unpadded = int(round(W_att * (H_img / W_img)))
+                total_padding = H_att - H_att_unpadded
+                top_padding = total_padding // 2
+                crop_start_row = top_padding
+                crop_end_row = top_padding + H_att_unpadded
+                cropped_attention_map = attention_map_raw[crop_start_row:crop_end_row, :]
+
+                # 4. Upsample
+                resized_heatmap = cv2.resize(cropped_attention_map, (W_img, H_img), interpolation=cv2.INTER_LINEAR)
+
+                # 5. Normalize and convert to tensor
+                normalized_heatmap = torch.from_numpy(resized_heatmap.astype(np.float32) / 255.0)
+                self.attention_map = normalized_heatmap.unsqueeze(0).to(self.data_device) # Shape [1, H, W]
+            except Exception as e:
+                print(f"\n[Warning] Failed to load or process attention map {attention_map_path}: {e}")
+                self.attention_map = None
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
