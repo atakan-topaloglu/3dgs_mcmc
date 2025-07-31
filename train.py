@@ -29,6 +29,8 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+
+from torchvision.transforms.functional import gaussian_blur
 # from lpipsPyTorch import LPIPS
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
@@ -127,10 +129,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_cam.is_synthetic:
             gt_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         else:
-            # The LPIPS loss is only applied to synthetic views
-            # lpips_loss = lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
-            synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) # + opt.lambda_lpips * lpips_loss
-        
+            if opt.blur_factor > 0:
+                H, W = viewpoint_cam.image_height, viewpoint_cam.image_width
+                sigma = opt.blur_factor * min(H, W)
+                if sigma > 0:
+                    # Kernel size must be an odd integer.
+                    kernel_size = 2 * int(3.0 * sigma) + 1
+                    blurred_render = gaussian_blur(image.unsqueeze(0), kernel_size, sigma)
+                    blurred_gt = gaussian_blur(gt_image.unsqueeze(0), kernel_size, sigma)
+                    synth_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(blurred_render, blurred_gt))
+
+            if opt.lambda_lpips > 0:
+                synth_loss += opt.lambda_lpips #* lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
         loss = gt_loss + synth_loss
 
         # Depth Loss
@@ -267,7 +277,7 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, default=None)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 15_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])

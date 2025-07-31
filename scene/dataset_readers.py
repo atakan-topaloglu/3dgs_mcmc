@@ -13,9 +13,9 @@ import os
 import sys
 import glob
 from PIL import Image
-from typing import NamedTuple
+from typing import NamedTuple, Dict, Any
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
-    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text, read_colmap_bin_array
+    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
 import json
@@ -70,7 +70,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_folder, depths_params, test_cam_names_list, main_camera_id, synthetic_dir):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_folder, depths_params, synthetic_dir, test_cam_names_list):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -80,61 +80,63 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
 
         extr = cam_extrinsics[key]
         intr = cam_intrinsics[extr.camera_id]
-        height = intr.height
-        width = intr.width
+        
+        height_gt = intr.height
+        width_gt = intr.width
 
-        is_synthetic = (extr.camera_id != main_camera_id)
-    
-        if is_synthetic:
-            if not synthetic_dir:
-                # This can happen if inject_synthetic_data.py was run but the synthetic images folder doesn't exist.
-                # It's better to skip than to fail.
-                print(f"\n[Warning] Image '{extr.name}' (id: {extr.id}) is linked to a non-main camera (ID: {extr.camera_id}), "
-                      f"but no 'synthetic_*' directory was found. Skipping this synthetic view.")
-                continue
-            image_path = os.path.join(synthetic_dir, os.path.basename(extr.name))
+        if intr.model=="SIMPLE_PINHOLE":
+            focal_length_x_gt = intr.params[0]
+            focal_length_y_gt = intr.params[0]
+        elif intr.model=="PINHOLE":
+            focal_length_x_gt = intr.params[0]
+            focal_length_y_gt = intr.params[1]
         else:
-            image_path = os.path.join(images_folder, os.path.basename(extr.name))
+            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
+        FovY_gt = focal2fov(focal_length_y_gt, height_gt)
+        FovX_gt = focal2fov(focal_length_x_gt, width_gt)
+
+        image_path = os.path.join(images_folder, os.path.basename(extr.name))
 
         if not os.path.exists(image_path):
             print(f"\n[Warning] Image {extr.name} not found at '{image_path}', skipping.")
             continue
 
-        uid = intr.id
-        R = np.transpose(qvec2rotmat(extr.qvec))
-        T = np.array(extr.tvec)
-
-        if intr.model=="SIMPLE_PINHOLE":
-            focal_length_x = intr.params[0]
-            FovY = focal2fov(focal_length_x, height)
-            FovX = focal2fov(focal_length_x, width)
-        elif intr.model=="PINHOLE":
-            focal_length_x = intr.params[0]
-            focal_length_y = intr.params[1]
-            FovY = focal2fov(focal_length_y, height)
-            FovX = focal2fov(focal_length_x, width)
-        else:
-            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
-
+        is_test = extr.name in test_cam_names_list
+    
         n_remove = len(extr.name.split('.')[-1]) + 1
         depth_params_cam = None
         if depths_params is not None:
             try:
                 depth_params_cam = depths_params[extr.name[:-n_remove]]
-            except:
+            except KeyError:
                 print("\n", key, "not found in depths_params")
-
-        image_name = extr.name
+                pass
+                
         depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
 
-        is_test = (image_name in test_cam_names_list) and not is_synthetic
+        gt_cam_info = CameraInfo(uid=extr.id, R=np.transpose(qvec2rotmat(extr.qvec)), T=np.array(extr.tvec),
+                                 FovY=FovY_gt, FovX=FovX_gt, image_path=image_path, image_name=extr.name,
+                                 width=width_gt, height=height_gt, is_synthetic=False, is_test=is_test,
+                                 depth_path=depth_path, depth_params=depth_params_cam)
+        cam_infos.append(gt_cam_info)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX,
-                              image_path=image_path, image_name=image_name,
-                              width=width, height=height, depth_path=depth_path,
-                              depth_params=depth_params_cam, is_test=is_test, is_synthetic=is_synthetic)
-        cam_infos.append(cam_info)
+        # --- Check for and create Synthetic CameraInfo ---
+        if synthetic_dir:
+            synth_image_path = os.path.join(synthetic_dir, os.path.basename(extr.name))
+            if os.path.exists(synth_image_path):
+                synth_img = Image.open(synth_image_path)
+                width_synth, height_synth = synth_img.size
+                
+                FovY_synth = focal2fov(focal_length_y_gt * height_synth / height_gt, height_synth)
+                FovX_synth = focal2fov(focal_length_x_gt * width_synth / width_gt, width_synth)
+
+                synth_cam_info = CameraInfo(uid=extr.id, R=np.transpose(qvec2rotmat(extr.qvec)), T=np.array(extr.tvec),
+                                            FovY=FovY_synth, FovX=FovX_synth, image_path=synth_image_path, image_name=extr.name,
+                                            width=width_synth, height=height_synth, is_synthetic=True, is_test=False,
+                                            depth_path="", depth_params=None)
+                cam_infos.append(synth_cam_info)
+
     sys.stdout.write('\n')
     return cam_infos
 
@@ -177,14 +179,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
     
     depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
 
-    # Find the main camera ID (typically the one with the highest resolution) and the synthetic images directory.
-    main_camera_id = -1
-    max_res = 0
-    for cam_id, intr in cam_intrinsics.items():
-        res = intr.width * intr.height
-        if res > max_res:
-            max_res = res
-            main_camera_id = cam_id
+
 
     synthetic_dir = ""
     # Find a directory starting with "synthetic_"
@@ -233,7 +228,6 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                                            depths_folder=os.path.join(path, depths) if depths != "" else "",
                                            depths_params=depths_params, 
                                            test_cam_names_list=test_cam_names_list,
-                                           main_camera_id=main_camera_id,
                                            synthetic_dir=synthetic_dir)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 

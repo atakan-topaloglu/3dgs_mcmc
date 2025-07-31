@@ -44,7 +44,8 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic):
     if cam_info.is_synthetic:
         # Synthetic images are pre-sized and should not be scaled further.
         # Their intrinsics are already adjusted for their resolution.
-        resolution = (orig_w, orig_h)
+        resolution = (cam_info.width, cam_info.height)
+        # print(resolution)
     else:
         # Apply resolution scaling only to original images.
         if args.resolution in [1, 2, 4, 8]:
