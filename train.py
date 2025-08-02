@@ -68,6 +68,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
+    print(args.cap_max)
+    print(args.opacity_reg)
+    print(args.scale_reg)
+    print(args.noise_lr)
+
     for iteration in range(first_iter, opt.iterations + 1):        
         # if network_gui.conn == None:
         #     network_gui.try_connect()

@@ -20,6 +20,8 @@ import json
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser
+from utils.system_utils import searchForAllIterations
+
 
 def readImages(renders_dir, gt_dir):
     renders = []
@@ -50,8 +52,23 @@ def evaluate(model_paths):
             per_view_dict_polytopeonly[scene_dir] = {}
 
             test_dir = Path(scene_dir) / "test"
+            point_cloud_folder = os.path.join(scene_dir, "point_cloud")
+            methods_to_eval = []
 
-            for method in os.listdir(test_dir):
+            try:
+                all_checkpoint_iters = searchForAllIterations(point_cloud_folder)
+                methods_to_eval = [f"ours_{it}" for it in sorted(all_checkpoint_iters)]
+                print(f"Found {len(methods_to_eval)} checkpoints to evaluate.")
+            except Exception as e:
+                print(f"Could not find checkpoints in {point_cloud_folder} ({e}), falling back to scanning test directory.")
+                methods_to_eval = sorted([d for d in os.listdir(test_dir) if d.startswith("ours_")])
+
+            for method in methods_to_eval:
+                print("Method:", method)
+                method_dir = test_dir / method
+                if not method_dir.is_dir():
+                    print(f"  Render directory for method {method} not found, skipping.")
+                    continue
                 print("Method:", method)
 
                 full_dict[scene_dir][method] = {}
@@ -59,7 +76,7 @@ def evaluate(model_paths):
                 full_dict_polytopeonly[scene_dir][method] = {}
                 per_view_dict_polytopeonly[scene_dir][method] = {}
 
-                method_dir = test_dir / method
+                # method_dir = test_dir / method
                 gt_dir = method_dir/ "gt"
                 renders_dir = method_dir / "renders"
                 renders, gts, image_names = readImages(renders_dir, gt_dir)

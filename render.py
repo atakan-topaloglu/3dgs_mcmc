@@ -20,6 +20,7 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+from utils.system_utils import searchForAllIterations
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
@@ -57,10 +58,26 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--render_all", action="store_true", help="Render all saved checkpoints")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+    iterations_to_render = []
+    if args.render_all:
+        point_cloud_folder = os.path.join(args.model_path, "point_cloud")
+        try:
+            iterations_to_render = searchForAllIterations(point_cloud_folder)
+            print(f"Found checkpoints to render: {iterations_to_render}")
+        except:
+            print(f"Could not find point_cloud folder at {point_cloud_folder}. Cannot render all checkpoints.")
+    else:
+        iterations_to_render.append(args.iteration)
+
+    for iteration in iterations_to_render:
+        print(f"\n-- Rendering checkpoint {iteration} --")
+        render_sets(model.extract(args), iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+
+    # render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
