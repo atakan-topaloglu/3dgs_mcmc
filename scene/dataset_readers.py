@@ -196,15 +196,25 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
 
 
-    synthetic_dir = ""
-    # Find a directory starting with "synthetic_"
-    # synth_dirs = glob.glob(os.path.join(path, "synthetic_*"))
-    all_dirs = glob.glob(os.path.join(path, "synthetic_*"))
+    if num_train_views != -1:
+        potential_dir = os.path.join(path, f"synthetic_{num_train_views}")
+        if os.path.isdir(potential_dir):
+            synthetic_dir = potential_dir
+            print(f"Selected synthetic directory based on num_train_views: {synthetic_dir}")
 
-    synthetic_dir = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{1,2}', os.path.basename(d))][0]
-    # if synth_dirs:
-    #     synthetic_dir = synth_dirs[0]
-    #     print(f"Found synthetic directory: {synthetic_dir}")
+    # Fallback to finding any synthetic directory if specific one isn't found or num_train_views is not set
+    if not synthetic_dir:
+        all_dirs = glob.glob(os.path.join(path, "synthetic_*"))
+        synth_dirs = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{1,2}', os.path.basename(d))]
+        if synth_dirs:
+            synthetic_dir = sorted(synth_dirs)[0]
+            print(f"Found fallback synthetic directory: {synthetic_dir}")
+
+    # If synth_attention_dir is provided as an argument, derive the path automatically.
+    actual_synth_attention_dir = ""
+    if synth_attention_dir  and synthetic_dir:
+        actual_synth_attention_dir = synthetic_dir + "_attention_maps"
+        print(f"Automatically determined attention map directory: {actual_synth_attention_dir}")
 
     depths_params = None
     if depths != "":
@@ -246,7 +256,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                                            depths_folder=os.path.join(path, depths) if depths != "" else "",
                                            depths_params=depths_params, 
                                            synthetic_dir=synthetic_dir,
-                                            synth_attention_dir=synth_attention_dir,
+                                            synth_attention_dir=actual_synth_attention_dir,
                                             test_cam_names_list=test_cam_names_list)
     
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
@@ -420,11 +430,24 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, num_train_views=
             depths = "" # Disable depth if params not found
 
     # Find synthetic directory
-    synthetic_dir = ""
-    synth_dirs = [d for d in glob.glob(os.path.join(path, "synthetic_*")) if re.fullmatch(r'synthetic_\d+', os.path.basename(d))]
-    if synth_dirs:
-        synthetic_dir = sorted(synth_dirs)[0]
-        print(f"Found synthetic directory: {synthetic_dir}")
+    if num_train_views != -1:
+        potential_dir = os.path.join(path, f"synthetic_{num_train_views}")
+        if os.path.isdir(potential_dir):
+            synthetic_dir = potential_dir
+            print(f"Selected synthetic directory based on num_train_views: {synthetic_dir}")
+
+    # Fallback to finding any synthetic directory if specific one isn't found or num_train_views is not set
+    if not synthetic_dir:
+        synth_dirs = [d for d in glob.glob(os.path.join(path, "synthetic_*")) if re.fullmatch(r'synthetic_\d+', os.path.basename(d))]
+        if synth_dirs:
+            synthetic_dir = sorted(synth_dirs)[0]
+            print(f"Found fallback synthetic directory: {synthetic_dir}")
+
+    # If synth_attention_dir is provided as an argument, derive the path automatically.
+    actual_synth_attention_dir  = ""
+    if synth_attention_dir  and synthetic_dir:
+        actual_synth_attention_dir = synthetic_dir + "_attention_maps"
+        print(f"Automatically determined attention map directory: {actual_synth_attention_dir}")
 
     # Load ground truth training cameras
     train_transforms_file = "transforms.json" if os.path.exists(os.path.join(path, "transforms.json")) else "transforms_train.json"
@@ -450,7 +473,7 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, num_train_views=
                 FovY_synth = focal2fov(fov2focal(gt_cam.FovX, gt_cam.width) * (synth_height / gt_cam.height), synth_height)
                 FovX_synth = focal2fov(fov2focal(gt_cam.FovX, gt_cam.width) * (synth_width / gt_cam.width), synth_width)
 
-                synth_attention_path = os.path.join(synth_attention_dir, os.path.basename(gt_cam.image_path)) if synth_attention_dir else ""
+                synth_attention_path = os.path.join(actual_synth_attention_dir, os.path.basename(gt_cam.image_path)) if actual_synth_attention_dir else ""
                 if synth_attention_path and not os.path.exists(synth_attention_path):
                     synth_attention_path = ""
 
