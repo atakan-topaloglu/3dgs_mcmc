@@ -61,7 +61,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     train_gt_cameras = scene.getTrainGTCameras().copy()
     train_synthetic_cameras = scene.getTrainSyntheticCameras().copy()
 
-    use_ratio_sampling = opt.gt_synth_ratio > 0 and len(train_gt_cameras) > 0 and len(train_synthetic_cameras) > 0
+    use_split_sampling = opt.gt_synth_ratio >= 0 and len(train_gt_cameras) > 0 and len(train_synthetic_cameras) > 0
     ema_loss_for_log = 0.0
     ema_synthetic_loss_for_log = 0.0
     ema_depth_loss_for_log = 0.0
@@ -99,9 +99,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
-        if use_ratio_sampling:
+        if use_split_sampling:
             # Decide whether to use GT or synthetic camera
-            if torch.rand(1).item() < (opt.gt_synth_ratio / (opt.gt_synth_ratio + 1.0)):
+            if opt.gt_synth_ratio == 0:
+                prob_gt = 0.5
+            else: # > 0
+                prob_gt = opt.gt_synth_ratio / (opt.gt_synth_ratio + 1.0)
+
+            if torch.rand(1).item() < prob_gt:
                 # Pick from GT
                 if not gt_viewpoint_stack:
                     gt_viewpoint_stack = train_gt_cameras.copy()
