@@ -79,31 +79,60 @@ def get_scales(key, cameras, images, points3d_ordered, args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--base_dir', help="path to colmap folder")
+    parser.add_argument('--base_dir', help="path to scene folder")
     parser.add_argument('--depths_dir', help="path to depth maps")
     parser.add_argument('--model_type', default="bin", choices=['bin', 'txt'])
     args = parser.parse_args()
 
+    is_blender = os.path.exists(os.path.join(args.base_dir, "transforms.json"))
 
-    cam_intrinsics, images_metas, points3d = read_model(os.path.join(args.base_dir, "sparse", "0"), ext=f".{args.model_type}")
 
-    pts_indices = np.array([points3d[key].id for key in points3d])
-    pts_xyzs = np.array([points3d[key].xyz for key in points3d])
-    
-    max_id = pts_indices.max() if len(pts_indices) > 0 else -1
-    points3d_ordered = np.zeros([max_id + 1, 3])
-    points3d_ordered[pts_indices] = pts_xyzs
+    if is_blender:
+        print("Blender scene detected. Assuming depth maps are metric. Generating dummy depth_params.json.")
+        depth_params = {}
+        
+        transform_files = []
+        for f in ["transforms.json", "transforms_test.json", "transforms_val.json"]:
+            p = os.path.join(args.base_dir, f)
+            if os.path.exists(p):
+                transform_files.append(p)
+        
+        for transform_file in transform_files:
+            with open(transform_file, 'r') as f:
+                meta = json.load(f)
+            for frame in meta['frames']:
+                image_name = os.path.splitext(os.path.basename(frame['file_path']))[0]
+                depth_params[image_name] = {"scale": 1.0, "offset": 0.0}
+        
+        output_path = os.path.join(args.base_dir, "depth_params.json")
+        with open(output_path, "w") as f:
+            json.dump(depth_params, f, indent=2)
+        
+        print(f"depth_params.json created at {output_path}.")
+    else:
+        colmap_sparse_dir = os.path.join(args.base_dir, "sparse", "0")
+        if not os.path.exists(colmap_sparse_dir):
+            print(f"Error: 'sparse/0' directory not found in '{args.base_dir}'. This does not seem to be a COLMAP scene.")
+            exit(1)
 
-    depth_param_list = Parallel(n_jobs=-1, backend="threading")(
-        delayed(get_scales)(key, cam_intrinsics, images_metas, points3d_ordered, args) for key in images_metas
-    )
+        cam_intrinsics, images_metas, points3d = read_model(colmap_sparse_dir, ext=f".{args.model_type}")
+        pts_indices = np.array([points3d[key].id for key in points3d])
+        pts_xyzs = np.array([points3d[key].xyz for key in points3d])
+        
+        max_id = pts_indices.max() if len(pts_indices) > 0 else -1
+        points3d_ordered = np.zeros([max_id + 1, 3])
+        points3d_ordered[pts_indices] = pts_xyzs
 
-    depth_params = {
-        depth_param["image_name"]: {"scale": depth_param["scale"], "offset": depth_param["offset"]}
-        for depth_param in depth_param_list if depth_param is not None
-    }
 
-    with open(f"{args.base_dir}/sparse/0/depth_params.json", "w") as f:
-        json.dump(depth_params, f, indent=2)
+        depth_param_list = Parallel(n_jobs=-1, backend="threading")(
+                delayed(get_scales)(key, cam_intrinsics, images_metas, points3d_ordered, args) for key in images_metas
+            )
+        depth_params = {
+                depth_param["image_name"]: {"scale": depth_param["scale"], "offset": depth_param["offset"]}
+                for depth_param in depth_param_list if depth_param is not None
+            }
 
-    print("depth_params.json created.")
+        with open(os.path.join(colmap_sparse_dir, "depth_params.json"), "w") as f:
+                json.dump(depth_params, f, indent=2)
+
+        print("depth_params.json created.")

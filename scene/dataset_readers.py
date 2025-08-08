@@ -313,7 +313,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                            is_nerf_synthetic=False)
     return scene_info
 
-def _read_blender_cameras_from_transforms(path, transforms_filename, white_background, is_test_set, extension=".png"):
+def _read_blender_cameras_from_transforms(path, transforms_filename, white_background, is_test_set, depths="", depths_params=None, extension=".png"):
     """
     Helper function to read cameras from a single Blender-style transforms file.
     """
@@ -361,15 +361,55 @@ def _read_blender_cameras_from_transforms(path, transforms_filename, white_backg
             FovY = fovy 
             FovX = fovx
  
+            depth_path_cam = ""
+            depth_params_cam = None
+            if depths:
+                # Construct depth path, assuming it's in a parallel folder `depths`
+                # with the same filename stem but possibly different extension.
+                depth_filename_stem = os.path.splitext(os.path.basename(frame["file_path"]))[0]
+                base_depth_path = os.path.join(path, depths, depth_filename_stem)
+                for ext in ['.png', '.exr', '.npy']:
+                    potential_path = base_depth_path + ext
+                    if os.path.exists(potential_path):
+                        depth_path_cam = potential_path
+                        break
+            
+            if depths_params is not None:
+                try:
+                    depth_params_cam = depths_params[image_name]
+                except KeyError:
+                    pass
+
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path,
                                         image_name=image_name, width=width, height=height,
                                         is_synthetic=False, is_test=is_test_set,
-                                        depth_path="", depth_params=None, attention_map_path=""))
+                                        depth_path=depth_path_cam, depth_params=depth_params_cam, attention_map_path=""))
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, depths, eval, num_train_views=-1, train_on_test_synth=False, synth_attention_dir="", init_type="random", num_pts=100_000, extension=".png"):
     print("Reading Blender-style data with sparse/synthetic setup...")
+
+    depths_params = None
+    if depths:
+        depth_params_file = os.path.join(path, "depth_params.json")
+        if os.path.exists(depth_params_file):
+            print(f"Found depth_params.json at {depth_params_file}")
+            with open(depth_params_file, "r") as f:
+                depths_params = json.load(f)
+            all_scales = np.array([depths_params[key]["scale"] for key in depths_params if "scale" in depths_params[key]])
+            if (all_scales > 0).sum() > 0:
+                med_scale = np.median(all_scales[all_scales > 0])
+            else:
+                med_scale = 0
+            for key in depths_params:
+                if "med_scale" not in depths_params[key]:
+                    depths_params[key]["med_scale"] = med_scale
+        else:
+            print(f"WARNING: --depths specified but depth_params.json not found in scene root '{path}'.")
+            print("You can generate it by running 'python utils/make_depth_scale.py --base_dir <path_to_scene> --depths_dir <path_to_depths>'.")
+            print("Continuing without depth supervision.")
+            depths = "" # Disable depth if params not found
 
     # Find synthetic directory
     synthetic_dir = ""
@@ -381,13 +421,13 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, num_train_views=
     # Load ground truth training cameras
     train_transforms_file = "transforms.json" if os.path.exists(os.path.join(path, "transforms.json")) else "transforms_train.json"
     print(f"Reading GT training cameras from: {train_transforms_file}")
-    gt_train_cameras = _read_blender_cameras_from_transforms(path, train_transforms_file, white_background, is_test_set=False, extension=extension)
+    gt_train_cameras = _read_blender_cameras_from_transforms(path, train_transforms_file, white_background, is_test_set=False, depths=depths, depths_params=depths_params, extension=extension)
 
     # Load test cameras if in eval mode
     test_cam_infos = []
     if eval:
         print("Reading test cameras from: transforms_test.json")
-        test_cam_infos = _read_blender_cameras_from_transforms(path, "transforms_test.json", white_background, is_test_set=True, extension=extension)
+        test_cam_infos = _read_blender_cameras_from_transforms(path, "transforms_test.json", white_background, is_test_set=True, depths=depths, depths_params=depths_params, extension=extension)
 
     # Load synthetic training cameras, linked to the GT training cameras
     synthetic_cam_infos = []
