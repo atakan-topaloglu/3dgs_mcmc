@@ -13,7 +13,7 @@ import os
 import json
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, cauchy_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -31,7 +31,7 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 from torchvision.transforms.functional import gaussian_blur
-# from lpipsPyTorch import LPIPS
+from lpipsPyTorch import LPIPS
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     if dataset.cap_max == -1:
@@ -46,7 +46,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
     
-    # lpips_vgg = LPIPS(net_type='vgg').to("cuda")
+    lpips_vgg = LPIPS(net_type='vgg').to("cuda")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -131,34 +131,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = 0.0
 
         if viewpoint_cam.is_synthetic:
-            target_image = gt_image
-            if opt.blur_factor > 0:
-                H, W = viewpoint_cam.image_height, viewpoint_cam.image_width
-                sigma = opt.blur_factor * min(H, W)
-                if sigma > 0:
-                    # Kernel size must be an odd integer.
-                    kernel_size = 2 * int(3.0 * sigma) + 1
-                    target_image = gaussian_blur(gt_image.unsqueeze(0), kernel_size, sigma).squeeze(0)
+            target_image = gt_image # Blurring removed
 
-            ssim_loss_term = opt.lambda_dssim * (1.0 - ssim(image, target_image))
 
             if viewpoint_cam.attention_map is not None:
-                l1_per_pixel = torch.abs(image - target_image)
-                # The attention map is (1, H, W), l1_per_pixel is (C, H, W). They broadcast correctly.
-                weighted_l1 = (l1_per_pixel * viewpoint_cam.attention_map).mean()
-                l1_loss_term = (1.0 - opt.lambda_dssim) * weighted_l1
+                C = 0.2 
+                error = image - target_image
+                cauchy_per_pixel = torch.log1p((error / C)**2)
+                cauchy_term = (cauchy_per_pixel * viewpoint_cam.attention_map).mean()
             else:
-                # Fallback to original unweighted L1
-                l1_loss_term = (1.0 - opt.lambda_dssim) * l1_loss(image, target_image)
+                cauchy_term = cauchy_loss(image, target_image)
 
-            synth_loss = l1_loss_term + ssim_loss_term
-            # if opt.lambda_lpips > 0:
-            #     synth_loss += opt.lambda_lpips #* lpips_vgg(image.unsqueeze(0), gt_image.unsqueeze(0)).mean()
+            ssim_term = 1.0 - ssim(image, target_image)
+            lpips_term = lpips_vgg(image.unsqueeze(0), target_image.unsqueeze(0)).mean()
 
+            synth_loss = (1.0 - opt.lambda_dssim_synth - opt.lambda_lpips) * cauchy_term + \
+                         opt.lambda_dssim_synth * ssim_term + \
+                         opt.lambda_lpips * lpips_term
+            
             loss += synth_loss
         else: # Not synthetic
             Ll1 = l1_loss(image, gt_image)
-            gt_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            ssim_term = 1.0 - ssim(image, gt_image)
+
+            gt_loss = (1.0 - opt.lambda_dssim_gt) * Ll1 + \
+                      opt.lambda_dssim_gt  * ssim_term
             loss += gt_loss
  
          # Depth Loss

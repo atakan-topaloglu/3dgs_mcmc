@@ -107,15 +107,23 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
         is_test = extr.name in test_cam_names_list
     
         n_remove = len(extr.name.split('.')[-1]) + 1
+        depth_stem = extr.name[:-n_remove]
         depth_params_cam = None
         if depths_params is not None:
             try:
-                depth_params_cam = depths_params[extr.name[:-n_remove]]
+                depth_params_cam = depths_params[depth_stem]
             except KeyError:
                 print("\n", key, "not found in depths_params")
                 pass
                 
-        depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}") if depths_folder != "" else ""
+        depth_path = ""
+        if depths_folder:
+            base_depth_path = os.path.join(depths_folder, depth_stem)
+            for ext in ['.png', '.exr', '.npy']:
+                potential_path = base_depth_path + ext
+                if os.path.exists(potential_path):
+                    depth_path = potential_path
+                    break
 
         gt_cam_info = CameraInfo(uid=extr.id, R=np.transpose(qvec2rotmat(extr.qvec)), T=np.array(extr.tvec),
                                  FovY=FovY_gt, FovX=FovX_gt, image_path=image_path, image_name=extr.name,
