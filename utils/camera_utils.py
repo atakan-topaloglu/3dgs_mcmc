@@ -15,6 +15,7 @@ from utils.general_utils import PILtoTorch
 from PIL import Image
 import cv2
 from utils.graphics_utils import fov2focal
+import torch
 
 WARNED = False
 
@@ -74,6 +75,11 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic):
 
     if resized_image_rgb.shape[0] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
+        # Composite RGBA images onto a white background if specified
+    if args.white_background and loaded_mask is not None:
+        background = torch.ones_like(gt_image)
+        gt_image = gt_image * loaded_mask + background * (1.0 - loaded_mask)
+        loaded_mask = None # Mask is now baked into the image
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 

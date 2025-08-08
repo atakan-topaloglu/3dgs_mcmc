@@ -44,9 +44,18 @@ class Scene:
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views, train_on_test_synth=args.train_on_test_synth, synth_attention_dir=args.synth_attention_dir)
-        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
-            print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.depths, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, "transforms.json")) or os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
+            print("Found transforms file, assuming Blender data set!")
+            scene_info = sceneLoadTypeCallbacks["Blender"](
+                path=args.source_path,
+                white_background=args.white_background,
+                depths=args.depths,
+                eval=args.eval,
+                num_train_views=args.num_train_views,
+                train_on_test_synth=args.train_on_test_synth,
+                synth_attention_dir=args.synth_attention_dir,
+                init_type=args.init_type
+            )
         else:
             assert False, "Could not recognize scene type!"
 

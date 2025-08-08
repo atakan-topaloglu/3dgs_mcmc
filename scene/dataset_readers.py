@@ -115,7 +115,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depths_fold
                 print("\n", key, "not found in depths_params")
                 pass
                 
-        depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
+        depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}") if depths_folder != "" else ""
 
         gt_cam_info = CameraInfo(uid=extr.id, R=np.transpose(qvec2rotmat(extr.qvec)), T=np.array(extr.tvec),
                                  FovY=FovY_gt, FovX=FovX_gt, image_path=image_path, image_name=extr.name,
@@ -313,76 +313,132 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                            is_nerf_synthetic=False)
     return scene_info
 
-def readCamerasFromTransforms(path, transformsfile, depths_folder, white_background, is_test, extension=".png"):
+def _read_blender_cameras_from_transforms(path, transforms_filename, white_background, is_test_set, extension=".png"):
+    """
+    Helper function to read cameras from a single Blender-style transforms file.
+    """
     cam_infos = []
 
-    with open(os.path.join(path, transformsfile)) as json_file:
-        contents = json.load(json_file)
-        fovx = contents["camera_angle_x"]
+    
+    transforms_path = os.path.join(path, transforms_filename)
+    if not os.path.exists(transforms_path):
+        print(f"[Warning] Transforms file not found at {transforms_path}")
+        return []
 
-        frames = contents["frames"]
-        for idx, frame in enumerate(frames):
-            cam_name = os.path.join(path, frame["file_path"] + extension)
+    with open(transforms_path) as json_file:
+         contents = json.load(json_file)
+         fovx = contents["camera_angle_x"]
+ 
+         frames = contents["frames"]
+         for idx, frame in enumerate(frames):
+            # Handle file paths that may or may not have the extension
+            relative_path = frame["file_path"]
+            if not relative_path.endswith(extension):
+                relative_path += extension
+            image_path = os.path.join(path, relative_path)
 
-            # NeRF 'transform_matrix' is a camera-to-world transform
+            if not os.path.exists(image_path):
+                print(f"[Warning] Image {relative_path} not found at '{image_path}', skipping.")
+                continue
+
+            image_name = Path(image_path).stem
+            image = Image.open(image_path)
+            width, height = image.size
+ 
+             # NeRF 'transform_matrix' is a camera-to-world transform
             c2w = np.array(frame["transform_matrix"])
-            # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+             # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
             c2w[:3, 1:3] *= -1
 
+            
             # get the world-to-camera transform and set R, T
             w2c = np.linalg.inv(c2w)
             R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
             T = w2c[:3, 3]
+ 
 
-            image_path = os.path.join(path, cam_name)
-            image_name = Path(cam_name).stem
-            image = Image.open(image_path)
-
-            im_data = np.array(image.convert("RGBA"))
-
-            bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
-
-            norm_data = im_data / 255.0
-            arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
-
-            fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+            fovy = focal2fov(fov2focal(fovx, width), height)
             FovY = fovy 
             FovX = fovx
+ 
 
-            depth_path = os.path.join(depths_folder, f"{image_name}.png") if depths_folder != "" else ""
-
-            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX,
-                            image_path=image_path, image_name=image_name,
-                            width=image.size[0], height=image.size[1], depth_path=depth_path, attention_map_path="",
-                            depth_params=None, is_test=is_test))
-            
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path,
+                                        image_name=image_name, width=width, height=height,
+                                        is_synthetic=False, is_test=is_test_set,
+                                        depth_path="", depth_params=None, attention_map_path=""))
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"):
-    depths_folder=os.path.join(path, depths) if depths != "" else ""
-    print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", depths_folder, white_background, False, extension)
-    print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", depths_folder, white_background, True, extension)
-    
-    if not eval:
-        train_cam_infos.extend(test_cam_infos)
-        test_cam_infos = []
+def readNerfSyntheticInfo(path, white_background, depths, eval, num_train_views=-1, train_on_test_synth=False, synth_attention_dir="", init_type="random", num_pts=100_000, extension=".png"):
+    print("Reading Blender-style data with sparse/synthetic setup...")
 
-    nerf_normalization = getNerfppNorm(train_cam_infos)
+    # Find synthetic directory
+    synthetic_dir = ""
+    synth_dirs = [d for d in glob.glob(os.path.join(path, "synthetic_*")) if re.fullmatch(r'synthetic_\d+', os.path.basename(d))]
+    if synth_dirs:
+        synthetic_dir = sorted(synth_dirs)[0]
+        print(f"Found synthetic directory: {synthetic_dir}")
 
+    # Load ground truth training cameras
+    train_transforms_file = "transforms.json" if os.path.exists(os.path.join(path, "transforms.json")) else "transforms_train.json"
+    print(f"Reading GT training cameras from: {train_transforms_file}")
+    gt_train_cameras = _read_blender_cameras_from_transforms(path, train_transforms_file, white_background, is_test_set=False, extension=extension)
+
+    # Load test cameras if in eval mode
+    test_cam_infos = []
+    if eval:
+        print("Reading test cameras from: transforms_test.json")
+        test_cam_infos = _read_blender_cameras_from_transforms(path, "transforms_test.json", white_background, is_test_set=True, extension=extension)
+
+    # Load synthetic training cameras, linked to the GT training cameras
+    synthetic_cam_infos = []
+    if synthetic_dir:
+        for gt_cam in gt_train_cameras:
+            synth_image_path = os.path.join(synthetic_dir, os.path.basename(gt_cam.image_path))
+            if os.path.exists(synth_image_path):
+                synth_img = Image.open(synth_image_path)
+                synth_width, synth_height = synth_img.size
+
+                # Recalculate FoV for synthetic image if its aspect ratio is different
+                FovY_synth = focal2fov(fov2focal(gt_cam.FovX, gt_cam.width) * (synth_height / gt_cam.height), synth_height)
+                FovX_synth = focal2fov(fov2focal(gt_cam.FovX, gt_cam.width) * (synth_width / gt_cam.width), synth_width)
+
+                synth_attention_path = os.path.join(synth_attention_dir, os.path.basename(gt_cam.image_path)) if synth_attention_dir else ""
+                if synth_attention_path and not os.path.exists(synth_attention_path):
+                    synth_attention_path = ""
+
+                synthetic_cam_infos.append(CameraInfo(uid=gt_cam.uid, R=gt_cam.R, T=gt_cam.T,
+                                                      FovY=FovY_synth, FovX=FovX_synth, image_path=synth_image_path,
+                                                     image_name=gt_cam.image_name, width=synth_width, height=synth_height,
+                                                      is_synthetic=True, is_test=False,
+                                                      depth_path="", depth_params=None, attention_map_path=synth_attention_path))
+
+    # Downsample GT training views if requested
+    if num_train_views != -1 and len(gt_train_cameras) > num_train_views:
+        print(f"Downsampling real training cameras from {len(gt_train_cameras)} to {num_train_views}")
+        indices = np.linspace(0, len(gt_train_cameras) - 1, num_train_views, dtype=int)
+        train_cam_infos_real = [gt_train_cameras[i] for i in indices]
+    else:
+        train_cam_infos_real = gt_train_cameras
+
+    # Combine GT and synthetic views for the final training set
+    train_cam_infos = train_cam_infos_real + synthetic_cam_infos
+
+    print("--- Dataset Summary ---")
+    print(f"Total GT Training Cameras: {len(train_cam_infos_real)}")
+    print(f"Total Synthetic Training Cameras: {len(synthetic_cam_infos)}")
+    print(f"Total Test Cameras: {len(test_cam_infos)}")
+    print("-----------------------")
+
+    # Use GT training cameras for scene normalization
+    nerf_normalization = getNerfppNorm(train_cam_infos_real)
+
+    # Point cloud generation
     ply_path = os.path.join(path, "points3d.ply")
-    if not os.path.exists(ply_path):
-        # Since this data set has no colmap data, we start with random points
-        num_pts = 100_000
+    if (init_type == "random" or not os.path.exists(ply_path)) and not os.path.exists(ply_path):
         print(f"Generating random point cloud ({num_pts})...")
-        
-        # We create random points inside the bounds of the synthetic Blender scenes
         xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
-
         storePly(ply_path, xyz, SH2RGB(shs) * 255)
     try:
         pcd = fetchPly(ply_path)
