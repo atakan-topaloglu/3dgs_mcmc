@@ -50,7 +50,7 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
-        self.synth_attention_dir = ""
+        self.synth_attention_dir = False
         self._depths = ""
         self._resolution = -1
         self._white_background = False
@@ -105,6 +105,8 @@ class OptimizationParams(ParamGroup):
         self.scale_reg = 0.01
         self.opacity_reg = 0.01
         self.gt_synth_ratio = -1.0
+        self.synth_decay_start_iter = 0
+        self.synth_decay_end_iter = -1
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
