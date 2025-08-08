@@ -24,6 +24,8 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from scene.gaussian_model import build_scaling_rotation
+import math
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -104,10 +106,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if opt.gt_synth_ratio == 0:
                 prob_gt = 0.5
             else: # > 0
-                progress = iteration / (opt.iterations)
+                progress = (iteration) 
                 progress = max(0.0, min(1.0, progress))
-                prob_gt = opt.gt_synth_ratio / (opt.gt_synth_ratio + 1.0)
-                prob_gt = prob_gt + (1.0 - prob_gt) * progress
+                # prob_gt goes from prob_gt_initial to (1 - prob_gt_initial) following a cosine curve, passing through 0.5 at the midpoint.
+                prob_gt = 0.5 - (0.5 - opt.gt_synth_ratio) * math.cos(progress * math.pi)
 
 
             if torch.rand(1).item() < prob_gt:
