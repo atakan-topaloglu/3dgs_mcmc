@@ -196,12 +196,13 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
 
 
-    synthetic_dir = ""
+    synthetic_dir = os.path.join(path, f"synthetic_{str(num_train_views)}" )
+    print(f"Synthetic directory: {synthetic_dir}")
+
     # Find a directory starting with "synthetic_"
     # synth_dirs = glob.glob(os.path.join(path, "synthetic_*"))
-    all_dirs = glob.glob(os.path.join(path, "synthetic_*"))
 
-    synthetic_dir = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{1,2}', os.path.basename(d))][0]
+    # synthetic_dir = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{1,2}', os.path.basename(d))][0]
     # if synth_dirs:
     #     synthetic_dir = synth_dirs[0]
     #     print(f"Found synthetic directory: {synthetic_dir}")
