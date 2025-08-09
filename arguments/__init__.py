@@ -105,6 +105,11 @@ class OptimizationParams(ParamGroup):
         self.scale_reg = 0.01
         self.opacity_reg = 0.01
         self.gt_synth_ratio = -1.0
+        self.ema_alpha = 0.1
+        self.annealing_tau_initial = 15
+        self.annealing_tau_final = 5
+        self.annealing_k = 5.0
+        self.annealing_duration_iters = 7000
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
