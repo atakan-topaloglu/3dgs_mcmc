@@ -201,14 +201,16 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
         if os.path.isdir(potential_dir):
             synthetic_dir = potential_dir
             print(f"Selected synthetic directory based on num_train_views: {synthetic_dir}")
+        else:
+            raise ValueError(f"Synthetic directory {potential_dir} not found")
 
     # Fallback to finding any synthetic directory if specific one isn't found or num_train_views is not set
-    if not synthetic_dir:
-        all_dirs = glob.glob(os.path.join(path, "synthetic_*"))
-        synth_dirs = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{1,2}', os.path.basename(d))]
-        if synth_dirs:
-            synthetic_dir = sorted(synth_dirs)[0]
-            print(f"Found fallback synthetic directory: {synthetic_dir}")
+    # if not synthetic_dir:
+    #     all_dirs = glob.glob(os.path.join(path, "synthetic_*"))
+    #     synth_dirs = [d for d in all_dirs if re.fullmatch(r'synthetic_\d{1,2}', os.path.basename(d))]
+    #     if synth_dirs:
+    #         synthetic_dir = sorted(synth_dirs)[0]
+    #         print(f"Found fallback synthetic directory: {synthetic_dir}")
 
     # If synth_attention_dir is provided as an argument, derive the path automatically.
     actual_synth_attention_dir = ""

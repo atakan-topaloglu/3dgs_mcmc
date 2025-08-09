@@ -13,6 +13,7 @@ import os
 import json
 import torch
 from random import randint
+import numpy as np
 from utils.loss_utils import l1_loss, ssim, cauchy_loss
 from gaussian_renderer import render, network_gui
 import sys
@@ -106,11 +107,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if opt.gt_synth_ratio == 0:
                 prob_gt = 0.5
             else: # > 0
-                progress = (iteration) 
-                progress = max(0.0, min(1.0, progress))
-                # prob_gt goes from prob_gt_initial to (1 - prob_gt_initial) following a cosine curve, passing through 0.5 at the midpoint.
-                prob_gt = 0.5 - (0.5 - opt.gt_synth_ratio) * math.cos(progress * math.pi)
-
+                progress = iteration / opt.iterations
+                prob_gt = 1/(1+np.exp(-3*(progress-opt.gt_synth_ratio)))
+                prob_gt = np.clip(prob_gt, 0, 1)
 
             if torch.rand(1).item() < prob_gt:
                 # Pick from GT
