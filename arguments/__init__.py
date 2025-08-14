@@ -60,6 +60,7 @@ class ModelParams(ParamGroup):
         self.cap_max = -1
         self.train_on_test_synth = False
         self.init_type = "random"
+        self.random_init_ratio = 0.2
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

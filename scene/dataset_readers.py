@@ -180,19 +180,26 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1, train_on_test_synth=False, synth_attention_dir=""):
+def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm", num_pts=100000, num_train_views=-1, train_on_test_synth=False, synth_attention_dir="", random_init_ratio=0.2):
+    sparse_dir_name = str(num_train_views) if num_train_views != -1 else "0"
+    sparse_path = os.path.join(path, "sparse", sparse_dir_name)
+    if not os.path.exists(sparse_path):
+        raise FileNotFoundError(f"The specified sparse directory does not exist: {sparse_path}")
+    print(f"Reading COLMAP sparse model from: {sparse_path}")
+ 
     try:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+        cameras_extrinsic_file = os.path.join(sparse_path, "images.bin")
+        cameras_intrinsic_file = os.path.join(sparse_path, "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
+        print(f"Read {len(cam_extrinsics)} extrinsics and {len(cam_intrinsics)} intrinsics from {cameras_extrinsic_file} and {cameras_intrinsic_file}")
     except:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+        cameras_extrinsic_file = os.path.join(sparse_path, "images.txt")
+        cameras_intrinsic_file = os.path.join(sparse_path, "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
-    
-    depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
+        print(f"Read {len(cam_extrinsics)} extrinsics and {len(cam_intrinsics)} intrinsics from {cameras_extrinsic_file} and {cameras_intrinsic_file}")
+    depth_params_file = os.path.join(sparse_path, "depth_params.json")
 
 
 
@@ -244,7 +251,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
     test_cam_names_list = []
     
     if eval:
-        test_txt_path = os.path.join(path, "sparse/0", "test.txt")
+        test_txt_path = os.path.join(sparse_path, "test.txt")
         if os.path.exists(test_txt_path):
             print(f"Found test.txt at {test_txt_path}, using for test set.")
             with open(test_txt_path, 'r') as file:
@@ -295,9 +302,9 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
     nerf_normalization = getNerfppNorm(train_cam_infos_real)
 
     if init_type == "sfm":
-        ply_path = os.path.join(path, "sparse/0/points3D.ply")
-        bin_path = os.path.join(path, "sparse/0/points3D.bin")
-        txt_path = os.path.join(path, "sparse/0/points3D.txt")
+        ply_path = os.path.join(sparse_path, "points3D.ply")
+        bin_path = os.path.join(sparse_path, "points3D.bin")
+        txt_path = os.path.join(sparse_path, "points3D.txt")
         if not os.path.exists(ply_path):
             print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
             try:
@@ -307,19 +314,51 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
             storePly(ply_path, xyz, rgb)
     elif init_type == "random":
         ply_path = os.path.join(path, "random.ply")
-        print(f"Generating random point cloud ({num_pts})...")
-        
-        xyz = np.random.random((num_pts, 3)) * nerf_normalization["radius"]* 3*2 -(nerf_normalization["radius"]*3)
-        
-        num_pts = xyz.shape[0]
-        shs = np.random.random((num_pts, 3)) / 255.0
-        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+        if not os.path.exists(ply_path):
+            print(f"Generating random point cloud ({num_pts})...")
+            xyz = np.random.random((num_pts, 3)) * nerf_normalization["radius"] * 3 * 2 - (nerf_normalization["radius"] * 3)
+            shs = np.random.random((xyz.shape[0], 3)) / 255.0
+            storePly(ply_path, xyz, SH2RGB(shs) * 255)
+        else:
+            print(f"Loading random point cloud from {ply_path}")
+    elif init_type == "hybrid":
+        ply_path = os.path.join(path, f"hybrid_init_{random_init_ratio:.2f}.ply")
+        if not os.path.exists(ply_path):
+            print(f"Generating hybrid point cloud and saving to {ply_path}")
+            # 1. Load SfM points
+            sfm_ply_path = os.path.join(sparse_path, "points3D.ply")
+            bin_path = os.path.join(sparse_path, "points3D.bin")
+            txt_path = os.path.join(sparse_path, "points3D.txt")
+            if not os.path.exists(sfm_ply_path):
+                print("Converting point3d.bin to .ply for hybrid initialization.")
+                try:
+                    xyz, rgb, _ = read_points3D_binary(bin_path)
+                except:
+                    xyz, rgb, _ = read_points3D_text(txt_path)
+                storePly(sfm_ply_path, xyz, rgb)
+            
+            sfm_pcd = fetchPly(sfm_ply_path)
+            sfm_points = sfm_pcd.points
+            sfm_colors = sfm_pcd.colors
 
-        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+            # 2. Generate random points
+            num_sfm_points = sfm_points.shape[0]
+            num_random_points = int(num_sfm_points * random_init_ratio)
+            print(f"Hybrid initialization: {num_sfm_points} SfM points, augmenting with {num_random_points} random points.")
+
+            scene_center = -nerf_normalization["translate"]
+            scene_radius = nerf_normalization["radius"]
+            random_points = (np.random.random((num_random_points, 3)) - 0.5) * (2 * scene_radius * 1.5) + scene_center
+            random_colors = np.random.random((num_random_points, 3))
+
+            combined_points = np.concatenate((sfm_points, random_points), axis=0)
+            combined_colors = np.concatenate((sfm_colors, random_colors), axis=0)
+            storePly(ply_path, combined_points, combined_colors * 255)
+        else:
+            print(f"Loading existing hybrid point cloud from {ply_path}")
     else:
-        print("Please specify a correct init_type: random or sfm")
+        print("Please specify a correct init_type: random, sfm, or hybrid")
         exit(0)
-
     try:
         pcd = fetchPly(ply_path)
     except:

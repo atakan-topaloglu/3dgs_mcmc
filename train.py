@@ -119,8 +119,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 prob_gt = 0.5
             else: # > 0
                 progress = iteration / opt.iterations
-                prob_gt = 1/(1+np.exp(-3*(progress-opt.gt_synth_ratio)))
-                prob_gt = np.clip(prob_gt, 0, 1)
+                prob_synth = 6*progress*((1-progress)**3)
+                prob_gt = np.clip(1-prob_synth, 0, 1)
 
             if torch.rand(1).item() < prob_gt:
                 # Pick from GT

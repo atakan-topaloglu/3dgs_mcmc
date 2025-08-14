@@ -43,7 +43,7 @@ class Scene:
         self.train_synthetic_cameras = {}
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views, train_on_test_synth=args.train_on_test_synth, synth_attention_dir=args.synth_attention_dir)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views, train_on_test_synth=args.train_on_test_synth, synth_attention_dir=args.synth_attention_dir, random_init_ratio=args.random_init_ratio)
         elif os.path.exists(os.path.join(args.source_path, "transforms.json")) or os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](
