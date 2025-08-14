@@ -74,18 +74,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     train_gt_cameras = scene.getTrainGTCameras().copy()
     train_synthetic_cameras = scene.getTrainSyntheticCameras().copy()
 
-    # --- Adaptive Sampling Initialization ---
-    num_synth_views = len(train_synthetic_cameras)
-    synthetic_view_difficulties = torch.ones(num_synth_views, device="cuda")
-    # Map camera UID to its index in the list/tensor for quick lookups
-    synth_cam_map = {cam.uid: i for i, cam in enumerate(train_synthetic_cameras)}
-    if checkpoint and synthetic_view_difficulties_chkpnt is not None:
-        if len(synthetic_view_difficulties_chkpnt) == num_synth_views:
-            synthetic_view_difficulties = synthetic_view_difficulties_chkpnt.to("cuda")
-            print("Loaded synthetic view difficulty scores from checkpoint.")
-        else:
-            print("[Warning] Mismatch in number of synthetic views between checkpoint and current run. Re-initializing difficulty scores.")
-
     use_split_sampling = opt.gt_synth_ratio >= 0 and len(train_gt_cameras) > 0 and len(train_synthetic_cameras) > 0
     ema_loss_for_log = 0.0
     ema_synthetic_loss_for_log = 0.0
@@ -141,19 +129,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 viewpoint_cam = gt_viewpoint_stack.pop(randint(0, len(gt_viewpoint_stack) - 1))
             else:
                               # Pick from synthetic using adaptive sampling
-                # Annealing schedule for temperature
-                progress = min(1.0, iteration / opt.annealing_duration_iters)
-                tau = opt.annealing_tau_final + (opt.annealing_tau_initial - opt.annealing_tau_final) * math.exp(-opt.annealing_k * progress)
-
-                # Calculate sampling weights (inverse difficulty)
-                weights = (1.0 / (synthetic_view_difficulties + 1e-6))**(1.0 / tau)
-                
-                # Normalize to get probabilities
-                probs = weights / torch.sum(weights)
-
-                # Sample a camera index (sampling with replacement)
-                sampled_idx = torch.multinomial(probs, 1).item()
-                viewpoint_cam = train_synthetic_cameras[sampled_idx]
+                if not synth_viewpoint_stack:
+                    synth_viewpoint_stack = train_synthetic_cameras.copy()
+                viewpoint_cam = synth_viewpoint_stack.pop(randint(0, len(synth_viewpoint_stack) - 1))
         else:
             if not viewpoint_stack:
                 viewpoint_stack = scene.getTrainCameras().copy()
@@ -197,13 +175,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             
             loss += synth_loss
 
-            # Update difficulty score for the sampled synthetic view
-            with torch.no_grad():
-                if viewpoint_cam.uid in synth_cam_map:
-                    cam_idx = synth_cam_map[viewpoint_cam.uid]
-                    current_loss = synth_loss.item()
-                    old_difficulty = synthetic_view_difficulties[cam_idx]
-                    synthetic_view_difficulties[cam_idx] = opt.ema_alpha * current_loss + (1.0 - opt.ema_alpha) * old_difficulty
         else: # Not synthetic
             Ll1 = l1_loss(image, gt_image)
             ssim_term = 1.0 - ssim(image, gt_image)
