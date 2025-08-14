@@ -75,6 +75,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     print(args.opacity_reg)
     print(args.scale_reg)
     print(args.noise_lr)
+    print(args.gt_synth_ratio)
 
     for iteration in range(first_iter, opt.iterations + 1):        
         # if network_gui.conn == None:
@@ -145,17 +146,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
             if viewpoint_cam.attention_map is not None:
-                C = 0.2 
-                error = image - target_image
-                cauchy_per_pixel = torch.log1p((error / C)**2)
-                cauchy_term = (cauchy_per_pixel * viewpoint_cam.attention_map).mean()
+                # C = 0.2 
+                # error = image - target_image
+                # cauchy_per_pixel = torch.log1p((error / C)**2)
+                # cauchy_term = (cauchy_per_pixel * viewpoint_cam.attention_map).mean()
+                l1_term = l1_loss(image, target_image)
+                l1_term = (l1_term * viewpoint_cam.attention_map).mean()
             else:
-                cauchy_term = cauchy_loss(image, target_image)
+                # cauchy_term = cauchy_loss(image, target_image)
+                l1_term = l1_loss(image, target_image)
 
             ssim_term = 1.0 - ssim(image, target_image)
             lpips_term = lpips_vgg(image.unsqueeze(0), target_image.unsqueeze(0)).mean()
 
-            synth_loss = (1.0 - opt.lambda_dssim_synth - opt.lambda_lpips) * cauchy_term + \
+            synth_loss = (1.0 - opt.lambda_dssim_synth - opt.lambda_lpips) * l1_term + \
                          opt.lambda_dssim_synth * ssim_term + \
                          opt.lambda_lpips * lpips_term
             
