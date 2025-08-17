@@ -303,7 +303,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
     if init_type == "sfm":
         ply_path = os.path.join(sparse_path, "points3D.ply")
-        bin_path = os.path.join(sparse_path, "points3D.bin")
+        # bin_path = os.path.join(sparse_path, "points3D.bin")
         txt_path = os.path.join(sparse_path, "points3D.txt")
         if not os.path.exists(ply_path):
             print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
@@ -311,6 +311,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                 xyz, rgb, _ = read_points3D_binary(bin_path)
             except:
                 xyz, rgb, _ = read_points3D_text(txt_path)
+                print(f"txt path is {txt_path}")
             storePly(ply_path, xyz, rgb)
     elif init_type == "random":
         ply_path = os.path.join(path, "random.ply")

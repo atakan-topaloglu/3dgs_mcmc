@@ -116,7 +116,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if use_split_sampling:
             # Decide whether to use GT or synthetic camera
             if opt.gt_synth_ratio == 0:
-                prob_gt = 0.5
+                prob_gt = 1
             else: # > 0
                 progress = iteration / opt.iterations
                 prob_synth = 6*progress*((1-progress)**3)
