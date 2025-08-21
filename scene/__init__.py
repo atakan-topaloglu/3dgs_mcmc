@@ -42,9 +42,8 @@ class Scene:
         self.train_gt_cameras = {}
         self.train_synthetic_cameras = {}
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views, train_on_test_synth=args.train_on_test_synth, synth_attention_dir=args.synth_attention_dir, random_init_ratio=args.random_init_ratio)
-        elif os.path.exists(os.path.join(args.source_path, "transforms.json")) or os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
+        if (os.path.exists(os.path.join(args.source_path, "transforms_val.json")) and
+            os.path.exists(os.path.join(args.source_path, "transforms_test.json"))):
             print("Found transforms file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](
                 path=args.source_path,
@@ -56,6 +55,8 @@ class Scene:
                 synth_attention_dir=args.synth_attention_dir,
                 init_type=args.init_type
             )
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
+            scene_info = sceneLoadTypeCallbacks["Colmap"](path=args.source_path, images=args.images, depths=args.depths, eval=args.eval, init_type=args.init_type, num_train_views=args.num_train_views, train_on_test_synth=args.train_on_test_synth, synth_attention_dir=args.synth_attention_dir, random_init_ratio=args.random_init_ratio)
         else:
             assert False, "Could not recognize scene type!"
 

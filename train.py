@@ -115,12 +115,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if use_split_sampling:
             # Decide whether to use GT or synthetic camera
-            if opt.gt_synth_ratio == 0:
-                prob_gt = 1
-            else: # > 0
+            if opt.gt_synth_schedule:
+                # Automatic schedule for GT vs. synthetic sampling
                 progress = iteration / opt.iterations
-                prob_synth = 6*progress*((1-progress)**3)
+                prob_synth = 6 * progress * ((1 - progress)**3)
                 prob_gt = np.clip(1-prob_synth, 0, 1)
+
+            else:
+                # Fixed ratio for GT vs. synthetic sampling
+                if opt.gt_synth_ratio == 0:
+                    prob_gt = 1.0
+                else:
+                    prob_gt = opt.gt_synth_ratio / (opt.gt_synth_ratio + 1.0)
 
             if torch.rand(1).item() < prob_gt:
                 # Pick from GT
@@ -128,7 +134,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gt_viewpoint_stack = train_gt_cameras.copy()
                 viewpoint_cam = gt_viewpoint_stack.pop(randint(0, len(gt_viewpoint_stack) - 1))
             else:
-                              # Pick from synthetic using adaptive sampling
+                              # Pick from synthetic
                 if not synth_viewpoint_stack:
                     synth_viewpoint_stack = train_synthetic_cameras.copy()
                 viewpoint_cam = synth_viewpoint_stack.pop(randint(0, len(synth_viewpoint_stack) - 1))
@@ -152,9 +158,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = 0.0
 
         if viewpoint_cam.is_synthetic:
-            target_image = gt_image # Blurring removed
-
-
+            target_image = gt_image 
+            
             if viewpoint_cam.attention_map is not None:
                 # C = 0.2 
                 # error = image - target_image

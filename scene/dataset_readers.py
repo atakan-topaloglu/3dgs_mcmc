@@ -301,6 +301,8 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
 
     nerf_normalization = getNerfppNorm(train_cam_infos_real)
 
+    # Point cloud generation
+    ply_path = "" # Start with no path
     if init_type == "sfm":
         ply_path = os.path.join(sparse_path, "points3D.ply")
         # bin_path = os.path.join(sparse_path, "points3D.bin")
@@ -313,6 +315,7 @@ def readColmapSceneInfo(path, images, depths, eval, llffhold=8, init_type="sfm",
                 xyz, rgb, _ = read_points3D_text(txt_path)
                 print(f"txt path is {txt_path}")
             storePly(ply_path, xyz, rgb)
+    
     elif init_type == "random":
         ply_path = os.path.join(path, "random.ply")
         if not os.path.exists(ply_path):

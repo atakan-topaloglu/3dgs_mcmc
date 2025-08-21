@@ -106,6 +106,7 @@ class OptimizationParams(ParamGroup):
         self.scale_reg = 0.01
         self.opacity_reg = 0.01
         self.gt_synth_ratio = -1.0
+        self.gt_synth_schedule = False
         self.ema_alpha = 0.1
         self.annealing_tau_initial = 15
         self.annealing_tau_final = 5
