@@ -86,6 +86,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     print(args.scale_reg)
     print(args.noise_lr)
     print(args.gt_synth_ratio)
+    print(args.gt_synth_schedule)
 
     for iteration in range(first_iter, opt.iterations + 1):        
         # if network_gui.conn == None:
@@ -161,18 +162,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             target_image = gt_image 
             
             if viewpoint_cam.attention_map is not None:
-                # C = 0.2 
-                # error = image - target_image
-                # cauchy_per_pixel = torch.log1p((error / C)**2)
-                # cauchy_term = (cauchy_per_pixel * viewpoint_cam.attention_map).mean()
-                l1_term = l1_loss(image, target_image)
-                l1_term = (l1_term * viewpoint_cam.attention_map).mean()
+                l1_term = (torch.abs(image - target_image) * viewpoint_cam.attention_map).mean()
+               # Weighted SSIM
+                ssim_term = 1.0 - ssim(image.unsqueeze(0), target_image.unsqueeze(0), attention_map=viewpoint_cam.attention_map)
+                # Globally weighted LPIPS
+                lpips_term = lpips_vgg(image.unsqueeze(0), target_image.unsqueeze(0)).mean()
+                lpips_term = lpips_term * viewpoint_cam.attention_map.mean()
             else:
-                # cauchy_term = cauchy_loss(image, target_image)
                 l1_term = l1_loss(image, target_image)
+                ssim_term = 1.0 - ssim(image.unsqueeze(0), target_image.unsqueeze(0))
+                lpips_term = lpips_vgg(image.unsqueeze(0), target_image.unsqueeze(0)).mean()
 
-            ssim_term = 1.0 - ssim(image, target_image)
-            lpips_term = lpips_vgg(image.unsqueeze(0), target_image.unsqueeze(0)).mean()
+            # ssim_term = 1.0 - ssim(image, target_image)
+            # lpips_term = lpips_vgg(image.unsqueeze(0), target_image.unsqueeze(0)).mean()
 
             synth_loss = (1.0 - opt.lambda_dssim_synth - opt.lambda_lpips) * l1_term + \
                          opt.lambda_dssim_synth * ssim_term + \
@@ -182,7 +184,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         else: # Not synthetic
             Ll1 = l1_loss(image, gt_image)
-            ssim_term = 1.0 - ssim(image, gt_image)
+            ssim_term = 1.0 - ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
 
             gt_loss = (1.0 - opt.lambda_dssim_gt) * Ll1 + \
                       opt.lambda_dssim_gt  * ssim_term
